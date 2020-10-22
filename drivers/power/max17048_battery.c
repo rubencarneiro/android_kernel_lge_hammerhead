@@ -30,8 +30,6 @@
 #include <linux/qpnp/qpnp-adc.h>
 #include <linux/debugfs.h>
 #include <linux/suspend.h>
-#include <linux/reboot.h>
-#include <linux/syscalls.h>
 
 #define MODE_REG      0x06
 #define VCELL_REG     0x02
@@ -58,6 +56,12 @@
 
 struct max17048_chip {
 	struct i2c_client *client;
+#ifdef CONFIG_SENSORS_QPNP_ADC_VOLTAGE
+	struct qpnp_vadc_chip *vadc_dev;
+#endif
+#ifdef CONFIG_SENSORS_QPNP_ADC_CURRENT
+	struct qpnp_iadc_chip *iadc_dev;
+#endif
 	struct power_supply batt_psy;
 	struct power_supply *ac_psy;
 	struct max17048_platform_data *pdata;
@@ -86,8 +90,6 @@ struct max17048_chip {
 	int batt_temp;
 	int batt_health;
 	int batt_current;
-	int uvlo_thr_mv;
-	int poll_interval_ms;
 };
 
 static struct max17048_chip *ref;
@@ -323,34 +325,6 @@ static int max17048_set_rcomp(struct max17048_chip *chip)
 	return ret;
 }
 
-#define UVLO_COUNT 3
-#define UVLO_FAST_POLL_MS 1000
-#define UVLO_NORMAL_POLL_MS 10000
-#define UVLO_INIT_POLL_MS 25000
-static void max17048_check_low_vbatt(struct max17048_chip *chip)
-{
-	static int uvlo_cnt = 0;
-
-	if (system_state == SYSTEM_BOOTING) {
-		chip->poll_interval_ms = UVLO_INIT_POLL_MS;
-		return;
-	}
-
-	if (chip->voltage < chip->uvlo_thr_mv) {
-		chip->poll_interval_ms = UVLO_FAST_POLL_MS;
-		uvlo_cnt ++;
-	} else {
-		chip->poll_interval_ms = UVLO_NORMAL_POLL_MS;
-		uvlo_cnt = 0;
-	}
-
-	if (uvlo_cnt >= UVLO_COUNT) {
-		pr_info("%s: power down by very low battery\n", __func__);
-		sys_sync();
-		kernel_power_off();
-	}
-}
-
 static void max17048_work(struct work_struct *work)
 {
 	struct max17048_chip *chip =
@@ -385,18 +359,12 @@ static void max17048_work(struct work_struct *work)
 	if (ret < 0)
 		pr_err("%s : error clear alert irq register.\n", __func__);
 
-	if (chip->capacity_level == 0) {
-		max17048_check_low_vbatt(chip);
-		schedule_delayed_work(&chip->monitor_work,
-				msecs_to_jiffies(chip->poll_interval_ms));
-	} else {
-		pr_info("%s: rsoc=0x%04X rvcell=0x%04X soc=%d"\
-			" v_mv=%d i_ua=%d t=%d\n", __func__,
-				chip->soc, chip->vcell,
+	pr_info("%s: rsoc=0x%04X rvcell=0x%04X soc=%d v_mv=%d i_ua=%d t=%d\n",
+				__func__, chip->soc, chip->vcell,
 				chip->capacity_level, chip->voltage,
 				chip->batt_current, chip->batt_temp);
-		wake_unlock(&chip->alert_lock);
-	}
+
+	wake_unlock(&chip->alert_lock);
 }
 
 static irqreturn_t max17048_interrupt_handler(int irq, void *data)
@@ -572,19 +540,12 @@ static int max17048_parse_dt(struct device *dev,
 		goto out;
 	}
 
-	ret = of_property_read_u32(dev_node, "max17048,uvlo-thr-mv",
-				   &chip->uvlo_thr_mv);
-	if (ret) {
-		pr_err("%s: failed to read uvlo threshold\n", __func__);
-		goto out;
-	}
-
 	pr_info("%s: rcomp = %d rcomp_co_hot = %d rcomp_co_cold = %d",
 			__func__, chip->rcomp, chip->rcomp_co_hot,
 			chip->rcomp_co_cold);
-	pr_info("%s: alert_thres = %d full_soc = %d empty_soc = %d uvlo=%d\n",
+	pr_info("%s: alert_thres = %d full_soc = %d empty_soc = %d",
 			__func__, chip->alert_threshold,
-			chip->full_soc, chip->empty_soc, chip->uvlo_thr_mv);
+			chip->full_soc, chip->empty_soc);
 
 out:
 	return ret;
@@ -622,17 +583,12 @@ static int max17048_get_prop_present(struct max17048_chip *chip)
 
 #define DEFAULT_TEMP    250
 #ifdef CONFIG_SENSORS_QPNP_ADC_VOLTAGE
-static int qpnp_get_battery_temp(int *temp)
+static int qpnp_get_battery_temp(struct max17048_chip *chip, int *temp)
 {
 	int ret = 0;
 	struct qpnp_vadc_result results;
 
-	if (qpnp_vadc_is_ready()) {
-		*temp = DEFAULT_TEMP;
-		return 0;
-	}
-
-	ret = qpnp_vadc_read(LR_MUX1_BATT_THERM, &results);
+	ret = qpnp_vadc_read(chip->vadc_dev, LR_MUX1_BATT_THERM, &results);
 	if (ret) {
 		pr_err("%s: Unable to read batt temp\n", __func__);
 		*temp = DEFAULT_TEMP;
@@ -650,7 +606,7 @@ static int max17048_get_prop_temp(struct max17048_chip *chip)
 #ifdef CONFIG_SENSORS_QPNP_ADC_VOLTAGE
 	int ret;
 
-	ret = qpnp_get_battery_temp(&chip->batt_temp);
+	ret = qpnp_get_battery_temp(chip, &chip->batt_temp);
 	if (ret)
 		pr_err("%s: failed to get batt temp.\n", __func__);
 #else
@@ -663,25 +619,20 @@ static int max17048_get_prop_temp(struct max17048_chip *chip)
 }
 
 #ifdef CONFIG_SENSORS_QPNP_ADC_CURRENT
-static int qpnp_get_battery_current(int *current_ua)
+static int qpnp_get_battery_current(struct max17048_chip *chip,
+			int *current_ua)
 {
 	struct qpnp_iadc_result i_result;
 	int ret;
 
-	if (qpnp_iadc_is_ready()) {
-		pr_err("%s: qpnp iadc is not ready!\n", __func__);
-		*current_ua = 0;
-		return 0;
-	}
-
-	ret = qpnp_iadc_read(EXTERNAL_RSENSE, &i_result);
+	ret = qpnp_iadc_read(chip->iadc_dev, EXTERNAL_RSENSE, &i_result);
 	if (ret) {
 		pr_err("%s: failed to read iadc\n", __func__);
 		*current_ua = 0;
 		return ret;
 	}
 
-	*current_ua = -i_result.result_ua;
+	*current_ua = i_result.result_ua;
 
 	return 0;
 }
@@ -692,7 +643,7 @@ static int max17048_get_prop_current(struct max17048_chip *chip)
 #ifdef CONFIG_SENSORS_QPNP_ADC_CURRENT
 	int ret;
 
-	ret = qpnp_get_battery_current(&chip->batt_current);
+	ret = qpnp_get_battery_current(chip, &chip->batt_current);
 	if (ret)
 		pr_err("%s: failed to get batt current.\n", __func__);
 #else
@@ -877,6 +828,32 @@ static int max17048_pm_notifier(struct notifier_block *notifier,
 	return NOTIFY_DONE;
 }
 
+static int max17048_get_adc(struct max17048_chip *chip,
+			struct i2c_client *client)
+{
+	int rc = 0;
+
+#ifdef CONFIG_SENSORS_QPNP_ADC_VOLTAGE
+	chip->vadc_dev = qpnp_get_vadc(&client->dev, "max17048");
+	if (IS_ERR(chip->vadc_dev)) {
+		rc = PTR_ERR(chip->vadc_dev);
+		if (rc != -EPROBE_DEFER)
+			pr_err("vadc property missing, rc=%d\n", rc);
+		return rc;
+	}
+#endif
+#ifdef CONFIG_SENSORS_QPNP_ADC_CURRENT
+	chip->iadc_dev = qpnp_get_iadc(&client->dev, "max17048");
+	if (IS_ERR(chip->iadc_dev)) {
+		rc = PTR_ERR(chip->iadc_dev);
+		if (rc != -EPROBE_DEFER)
+			pr_err("iadc property missing, rc=%d\n", rc);
+		return rc;
+	}
+#endif
+	return 0;
+}
+
 static int max17048_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
@@ -889,6 +866,13 @@ static int max17048_probe(struct i2c_client *client,
 	chip = kzalloc(sizeof(*chip), GFP_KERNEL);
 	if (!chip)
 		return -ENOMEM;
+
+#if defined(CONFIG_SENSORS_QPNP_ADC_CURRENT) || \
+		defined(CONFIG_SENSORS_QPNP_ADC_VOLTAGE)
+	ret = max17048_get_adc(chip, client);
+	if (ret < 0)
+		goto error;
+#endif
 
 	if (!i2c_check_functionality(client->adapter,
 				I2C_FUNC_SMBUS_WORD_DATA)) {

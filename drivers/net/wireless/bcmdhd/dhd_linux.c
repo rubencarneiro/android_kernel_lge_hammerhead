@@ -292,7 +292,7 @@ typedef struct dhd_info {
 #ifdef DHDTHREAD
 	/* Thread based operation */
 	bool threads_only;
-	struct semaphore sdsem;
+	struct mutex	sdmutex;
 
 	tsk_ctl_t	thr_dpc_ctl;
 	tsk_ctl_t	thr_wdt_ctl;
@@ -773,7 +773,7 @@ static int dhd_set_suspend(int value, dhd_pub_t *dhd)
 				dhd->early_suspended = 1;
 #endif
 				/* Kernel suspended */
-				DHD_ERROR(("%s: force extra Suspend setting \n", __FUNCTION__));
+				DHD_INFO(("%s: force extra Suspend setting \n", __FUNCTION__));
 
 #ifndef SUPPORT_PM2_ONLY
 				dhd_wl_ioctl_cmd(dhd, WLC_SET_PM, (char *)&power_mode,
@@ -813,7 +813,7 @@ static int dhd_set_suspend(int value, dhd_pub_t *dhd)
 				dhd->early_suspended = 0;
 #endif
 				/* Kernel resumed  */
-				DHD_ERROR(("%s: Remove extra suspend setting \n", __FUNCTION__));
+				DHD_INFO(("%s: Remove extra suspend setting \n", __FUNCTION__));
 
 #ifndef SUPPORT_PM2_ONLY
 				power_mode = PM_FAST;
@@ -1822,7 +1822,7 @@ static int dhd_rx_suspend_again(struct sk_buff *skb)
 #undef ETHER_ICMP6_TYPE
 #undef ETHER_ICMP6_DADDR
 	}
-	return DHD_PACKET_TIMEOUT_MS;
+	return CUSTOM_DHCP_LOCK_xTIME * DHD_PACKET_TIMEOUT_MS;
 }
 #endif
 
@@ -2022,7 +2022,10 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan,
 #ifdef CONFIG_PARTIALRESUME
 			tout_rx |= dhd_rx_suspend_again(skb);
 #else
-			tout_rx = DHD_PACKET_TIMEOUT_MS;
+			if (skb->dev->ieee80211_ptr && skb->dev->ieee80211_ptr->ps == false)
+				tout_rx = CUSTOM_DHCP_LOCK_xTIME * DHD_PACKET_TIMEOUT_MS;
+			else
+				tout_rx = DHD_PACKET_TIMEOUT_MS;
 #endif
 #ifdef DHD_WAKE_STATUS
 			if (unlikely(pkt_wake)) {
@@ -2133,7 +2136,7 @@ dhd_rx_frame(dhd_pub_t *dhdp, int ifidx, void *pktbuf, int numpkt, uint8 chan,
 	DHD_OS_WAKE_LOCK_CTRL_TIMEOUT_ENABLE(dhdp, tout_ctrl);
 
 #ifdef CONFIG_PARTIALRESUME
-	if (tout_rx || tout_ctrl)
+	if ((tout_rx || tout_ctrl) && dhd->pub.up)
 		wifi_process_partial_resume(WIFI_PR_VOTE_FOR_RESUME);
 #endif
 }
@@ -2230,8 +2233,9 @@ dhd_watchdog_thread(void *data)
 			if (dhd->pub.dongle_reset == FALSE) {
 				DHD_TIMER(("%s:\n", __FUNCTION__));
 
-				/* Call the bus module watchdog */
-				dhd_bus_watchdog(&dhd->pub);
+				/* Call the bus module watchdog only if pub.up is TRUE */
+				if (dhd->pub.up)
+					dhd_bus_watchdog(&dhd->pub);
 
 				flags = dhd_os_spin_lock(&dhd->pub);
 				/* Count the tick for reference */
@@ -2273,7 +2277,8 @@ static void dhd_watchdog(ulong data)
 
 	dhd_os_sdlock(&dhd->pub);
 	/* Call the bus module watchdog */
-	dhd_bus_watchdog(&dhd->pub);
+	if (dhd->pub.up)	
+		dhd_bus_watchdog(&dhd->pub);
 
 	flags = dhd_os_spin_lock(&dhd->pub);
 	/* Count the tick for reference */
@@ -3483,7 +3488,7 @@ dhd_attach(osl_t *osh, struct dhd_bus *bus, uint bus_hdrlen)
 
 #ifdef DHDTHREAD
 	/* Initialize thread based operation and lock */
-	sema_init(&dhd->sdsem, 1);
+	mutex_init(&dhd->sdmutex);
 	if ((dhd_watchdog_prio >= 0) && (dhd_dpc_prio >= 0)) {
 		dhd->threads_only = TRUE;
 	}
@@ -5352,7 +5357,7 @@ dhd_os_sdlock(dhd_pub_t *pub)
 
 #ifdef DHDTHREAD
 	if (dhd->threads_only)
-		down(&dhd->sdsem);
+		mutex_lock(&dhd->sdmutex);
 	else
 #endif /* DHDTHREAD */
 	spin_lock_bh(&dhd->sdlock);
@@ -5367,7 +5372,7 @@ dhd_os_sdunlock(dhd_pub_t *pub)
 
 #ifdef DHDTHREAD
 	if (dhd->threads_only)
-		up(&dhd->sdsem);
+		mutex_unlock(&dhd->sdmutex);
 	else
 #endif /* DHDTHREAD */
 	spin_unlock_bh(&dhd->sdlock);
@@ -6573,7 +6578,7 @@ int dhd_os_wd_wake_lock(dhd_pub_t *pub)
 			wake_lock(&dhd->wl_wdwake);
 #endif
 #ifdef CONFIG_PARTIALRESUME
-		if (!dhd->wakelock_wd_counter)
+		if (!dhd->wakelock_wd_counter && pub->up)
 			wifi_process_partial_resume(WIFI_PR_WD_INIT);
 #endif
 		dhd->wakelock_wd_counter++;

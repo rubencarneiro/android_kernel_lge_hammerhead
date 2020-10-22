@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -20,6 +20,8 @@
 #include <linux/types.h>
 #include <linux/completion.h>
 #include <linux/wait.h>
+#include <linux/workqueue.h>
+#include <linux/pm_qos.h>
 #include <mach/msm_bus.h>
 #include <mach/msm_bus_board.h>
 #include <mach/ocmem.h>
@@ -32,7 +34,6 @@
 #include <media/msm_vidc.h>
 #include <media/msm_media_info.h>
 
-#include "vidc_hfi_api.h"
 #include "vidc_hfi_api.h"
 
 #define MSM_VIDC_DRV_NAME "msm_vidc_driver"
@@ -68,14 +69,10 @@ enum vidc_ports {
 
 enum vidc_core_state {
 	VIDC_CORE_UNINIT = 0,
+	VIDC_CORE_LOADED,
 	VIDC_CORE_INIT,
 	VIDC_CORE_INIT_DONE,
 	VIDC_CORE_INVALID
-};
-
-enum vidc_calculation {
-	CLOCKS = 0,
-	LOAD
 };
 
 /*Donot change the enum values unless
@@ -105,10 +102,29 @@ struct buf_info {
 	struct vb2_buffer *buf;
 };
 
+struct msm_vidc_list {
+	struct list_head list;
+	struct mutex lock;
+};
+
+static inline void INIT_MSM_VIDC_LIST(struct msm_vidc_list *mlist)
+{
+	mutex_init(&mlist->lock);
+	INIT_LIST_HEAD(&mlist->list);
+}
+
+enum buffer_owner {
+	DRIVER,
+	FIRMWARE,
+	CLIENT,
+	MAX_OWNER
+};
+
 struct internal_buf {
 	struct list_head list;
 	enum hal_buffer buffer_type;
 	struct msm_smem *handle;
+	enum buffer_owner buffer_ownership;
 };
 
 struct msm_vidc_format {
@@ -117,7 +133,6 @@ struct msm_vidc_format {
 	u32 fourcc;
 	int num_planes;
 	int type;
-	enum buffer_mode_type buf_type;
 	u32 (*get_frame_size)(int plane, u32 height, u32 width);
 };
 
@@ -134,8 +149,8 @@ struct msm_video_device {
 };
 
 struct session_prop {
-	u32 width;
-	u32 height;
+	u32 width[MAX_PORT_NUM];
+	u32 height[MAX_PORT_NUM];
 	u32 fps;
 	u32 bitrate;
 };
@@ -185,14 +200,20 @@ struct msm_vidc_core_capability {
 	struct hal_capability_supported width;
 	struct hal_capability_supported height;
 	struct hal_capability_supported frame_rate;
+	u32 pixelprocess_capabilities;
+	struct hal_capability_supported scale_x;
+	struct hal_capability_supported scale_y;
+	struct hal_capability_supported ltr_count;
 	struct hal_capability_supported hier_p;
 	struct hal_capability_supported mbs_per_frame;
 	u32 capability_set;
+	enum buffer_mode_type buffer_mode[MAX_PORT_NUM];
+	u32 buffer_size_limit;
 };
 
 struct msm_vidc_core {
 	struct list_head list;
-	struct mutex sync_lock, lock;
+	struct mutex lock;
 	int id;
 	void *device;
 	struct msm_video_device vdev[MSM_VIDC_MAX_DEVICES];
@@ -203,6 +224,9 @@ struct msm_vidc_core {
 	struct completion completions[SYS_MSG_END - SYS_MSG_START + 1];
 	enum msm_vidc_hfi_type hfi_type;
 	struct msm_vidc_platform_resources resources;
+	u32 enc_codec_supported;
+	u32 dec_codec_supported;
+	struct delayed_work fw_unload_work;
 };
 
 struct msm_vidc_inst {
@@ -215,9 +239,10 @@ struct msm_vidc_inst {
 	int state;
 	struct msm_vidc_format *fmts[MAX_PORT_NUM];
 	struct buf_queue bufq[MAX_PORT_NUM];
-	struct list_head pendingq;
+	struct msm_vidc_list pendingq;
 	struct list_head internalbufs;
 	struct list_head persistbufs;
+	struct list_head outputbufs;
 	struct buffer_requirements buff_req;
 	void *mem_client;
 	struct v4l2_ctrl_handler ctrl_handler;
@@ -236,13 +261,13 @@ struct msm_vidc_inst {
 	struct msm_vidc_debug debug;
 	struct buf_count count;
 	enum msm_vidc_modes flags;
+	u32 multi_stream_mode;
 	struct msm_vidc_core_capability capability;
-	u32 output_alloc_mode_supported;
-	u32 output_alloc_mode;
+	enum buffer_mode_type buffer_mode_set[MAX_PORT_NUM];
 	struct list_head registered_bufs;
 	bool map_output_buffer;
-	atomic_t get_seq_hdr_cnt;
 	struct v4l2_ctrl **ctrls;
+	struct pm_qos_request pm_qos;
 };
 
 extern struct msm_vidc_drv *vidc_driver;
@@ -301,4 +326,6 @@ int qbuf_dynamic_buf(struct msm_vidc_inst *inst,
 			struct buffer_info *binfo);
 int unmap_and_deregister_buf(struct msm_vidc_inst *inst,
 			struct buffer_info *binfo);
+bool msm_smem_compare_buffers(void *clt, int fd, void *priv);
+void msm_vidc_fw_unload_handler(struct work_struct *work);
 #endif

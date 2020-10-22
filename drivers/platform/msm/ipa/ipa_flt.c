@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -89,7 +89,7 @@ static int ipa_generate_flt_hw_rule(enum ipa_ip_type ip,
  * @ip: the ip address family type
  * @hdr_sz: header size
  *
- * Returns:	0 on success, negative on failure
+ * Returns:	size on success, negative on failure
  *
  * caller needs to hold any needed locks to ensure integrity
  *
@@ -181,8 +181,15 @@ int ipa_generate_flt_hw_tbl(enum ipa_ip_type ip, struct ipa_mem_buffer *mem)
 	u8 *base;
 	struct ipa_mem_buffer flt_tbl_mem;
 	u8 *ftbl_membody;
+	int res;
 
-	mem->size = ipa_get_flt_hw_tbl_size(ip, &hdr_sz);
+	res = ipa_get_flt_hw_tbl_size(ip, &hdr_sz);
+	if (res < 0) {
+		IPAERR("ipa_get_flt_hw_tbl_size failed %d\n", res);
+		return res;
+	}
+
+	mem->size = res;
 	mem->size = IPA_HW_TABLE_ALIGNMENT(mem->size);
 
 	if (mem->size == 0) {
@@ -240,7 +247,12 @@ int ipa_generate_flt_hw_tbl(enum ipa_ip_type ip, struct ipa_mem_buffer *mem)
 					((u32)body &
 					IPA_FLT_ENTRY_MEMORY_ALLIGNMENT));
 		} else {
-			WARN_ON(tbl->sz == 0);
+			if (tbl->sz == 0) {
+				IPAERR("tbl size is 0\n");
+				WARN_ON(1);
+				goto proc_err;
+			}
+
 			/* allocate memory for the flt tbl */
 			flt_tbl_mem.size = tbl->sz;
 			flt_tbl_mem.base =
@@ -317,7 +329,12 @@ int ipa_generate_flt_hw_tbl(enum ipa_ip_type ip, struct ipa_mem_buffer *mem)
 						((u32)body &
 					IPA_FLT_ENTRY_MEMORY_ALLIGNMENT));
 			} else {
-				WARN_ON(tbl->sz == 0);
+				if (tbl->sz == 0) {
+					IPAERR("tbl size is 0\n");
+					WARN_ON(1);
+					goto proc_err;
+				}
+
 				/* allocate memory for the flt tbl */
 				flt_tbl_mem.size = tbl->sz;
 				flt_tbl_mem.base =
@@ -802,8 +819,11 @@ int ipa_reset_flt(enum ipa_ip_type ip)
 	IPADBG("reset flt ip=%d\n", ip);
 	list_for_each_entry_safe(entry, next, &tbl->head_flt_rule_list, link) {
 		node = ipa_search(&ipa_ctx->flt_rule_hdl_tree, (u32)entry);
-		if (node == NULL)
+		if (node == NULL) {
 			WARN_ON(1);
+			mutex_unlock(&ipa_ctx->lock);
+			return -EFAULT;
+		}
 
 		if ((ip == IPA_IP_v4 &&
 		     entry->rule.attrib.attrib_mask == IPA_FLT_PROTOCOL &&
@@ -833,8 +853,11 @@ int ipa_reset_flt(enum ipa_ip_type ip)
 				link) {
 			node = ipa_search(&ipa_ctx->flt_rule_hdl_tree,
 					(u32)entry);
-			if (node == NULL)
+			if (node == NULL) {
 				WARN_ON(1);
+				mutex_unlock(&ipa_ctx->lock);
+				return -EFAULT;
+			}
 			list_del(&entry->link);
 			entry->tbl->rule_cnt--;
 			if (entry->rt_tbl)

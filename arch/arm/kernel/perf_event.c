@@ -119,7 +119,7 @@ armpmu_map_event(const unsigned (*event_map)[PERF_COUNT_HW_MAX], u64 config)
 	int mapping;
 
 	if (config >= PERF_COUNT_HW_MAX)
-		return -ENOENT;
+		return -EINVAL;
 
 	mapping = (*event_map)[config];
 	return mapping == HW_OP_UNSUPPORTED ? -ENOENT : mapping;
@@ -343,19 +343,27 @@ out:
 }
 
 static int
-validate_event(struct pmu_hw_events *hw_events,
-	       struct perf_event *event)
+validate_event(struct pmu *pmu, struct pmu_hw_events *hw_events,
+			       struct perf_event *event)
 {
-	struct arm_pmu *armpmu = to_arm_pmu(event->pmu);
+	struct arm_pmu *armpmu;
 	struct hw_perf_event fake_event = event->hw;
 	struct pmu *leader_pmu = event->group_leader->pmu;
 
 	if (is_software_event(event))
 		return 1;
 
+        /*
+         * Reject groups spanning multiple HW PMUs (e.g. CPU + CCI). The
+         * core perf code won't check that the pmu->ctx == leader->ctx
+         * until after pmu->event_init(event).
+         */
+        if (event->pmu != pmu)
+                return 0;
+
 	if (event->pmu != leader_pmu || event->state <= PERF_EVENT_STATE_OFF)
 		return 1;
-
+        armpmu = to_arm_pmu(event->pmu);
 	return armpmu->get_event_idx(hw_events, &fake_event) >= 0;
 }
 
@@ -373,15 +381,15 @@ validate_group(struct perf_event *event)
 	memset(fake_used_mask, 0, sizeof(fake_used_mask));
 	fake_pmu.used_mask = fake_used_mask;
 
-	if (!validate_event(&fake_pmu, leader))
+	if (!validate_event(event->pmu, &fake_pmu, leader))
 		return -EINVAL;
 
 	list_for_each_entry(sibling, &leader->sibling_list, group_entry) {
-		if (!validate_event(&fake_pmu, sibling))
+		if (!validate_event(event->pmu, &fake_pmu, sibling))
 			return -EINVAL;
 	}
 
-	if (!validate_event(&fake_pmu, event))
+	if (!validate_event(event->pmu, &fake_pmu, event))
 		return -EINVAL;
 
 	return 0;
@@ -894,6 +902,8 @@ static int __cpuinit pmu_cpu_notify(struct notifier_block *b,
 						 hcpu, 1);
 		break;
 	case CPU_STARTING:
+		if (cpu_pmu && cpu_pmu->reset)
+			cpu_pmu->reset(NULL);
 		if (cpu_pmu && cpu_pmu->restore_pm_registers)
 			smp_call_function_single(cpu,
 						 cpu_pmu->restore_pm_registers,
@@ -928,9 +938,8 @@ static int __cpuinit pmu_cpu_notify(struct notifier_block *b,
 				enable_irq_callback(&irq);
 			}
 
-			if (cpu_pmu && cpu_pmu->reset) {
+			if (cpu_pmu) {
 				__get_cpu_var(from_idle) = 1;
-				cpu_pmu->reset(NULL);
 				pmu = &cpu_pmu->pmu;
 				pmu->pmu_enable(pmu);
 				return NOTIFY_OK;

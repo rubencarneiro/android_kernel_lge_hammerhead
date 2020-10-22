@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -30,6 +30,9 @@
 			KGSL_CLK_IFACE | KGSL_CLK_MEM | KGSL_CLK_MEM_IFACE |
 			KGSL_CLK_ALT_MEM_IFACE */
 
+		qcom,pm-qos-active-latency = <501>;
+		qcom,pm-qos-wakeup-latency = <490>;
+
 		/* Bus Scale Settings */
 		qcom,msm-bus,name = "grp3d";
 		qcom,msm-bus,num-cases = <4>;
@@ -38,13 +41,16 @@
 			<26 512 0 0>,
 			<26 512 0 800000>,
 			<26 512 0 1600000>,
-			<26 512 0 2128000>;
+			<26 512 0 2664000>;
 
 		/* GDSC oxili regulators */
 		vdd-supply = <&gdsc_oxili_cx>;
 
 		/* IOMMU Data */
 		iommu = <&gfx_iommu>;
+
+		/* CPU latency parameter */
+		qcom,pm-qos-latency = <701>;
 
 		/* Power levels */
 		qcom,gpu-pwrlevels {

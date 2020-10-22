@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -37,10 +37,6 @@ module_param_array(rmnet_dev_names, charp, NULL, S_IRUGO | S_IWUSR);
 #define ACM_CTRL_CTS		BIT(1)
 #define ACM_CTRL_RI		BIT(2)
 #define ACM_CTRL_CD		BIT(3)
-
-/* polling interval for Interrupt ep */
-#define HS_INTERVAL		7
-#define FS_LS_INTERVAL		3
 
 /*echo modem_wait > /sys/class/hsicctl/hsicctlx/modem_wait*/
 static ssize_t modem_wait_store(struct device *d, struct device_attribute *attr,
@@ -200,8 +196,10 @@ static void get_encap_work(struct work_struct *w)
 		dev->get_encap_failure_cnt++;
 		usb_unanchor_urb(dev->rcvurb);
 		usb_autopm_put_interface(dev->intf);
-		dev_err(dev->devicep,
-		"%s: Error submitting Read URB %d\n", __func__, status);
+		if (status != -ENODEV)
+			dev_err(dev->devicep,
+			"%s: Error submitting Read URB %d\n",
+			__func__, status);
 		goto resubmit_int_urb;
 	}
 
@@ -214,7 +212,9 @@ resubmit_int_urb:
 		status = usb_submit_urb(dev->inturb, GFP_KERNEL);
 		if (status) {
 			usb_unanchor_urb(dev->inturb);
-			dev_err(dev->devicep, "%s: Error re-submitting Int URB %d\n",
+			if (status != -ENODEV)
+				dev_err(dev->devicep,
+				"%s: Error re-submitting Int URB %d\n",
 				__func__, status);
 		}
 	}
@@ -286,8 +286,10 @@ resubmit_int_urb:
 	status = usb_submit_urb(urb, GFP_ATOMIC);
 	if (status) {
 		usb_unanchor_urb(urb);
-		dev_err(dev->devicep, "%s: Error re-submitting Int URB %d\n",
-		__func__, status);
+		if (status != -ENODEV)
+			dev_err(dev->devicep,
+			"%s: Error re-submitting Int URB %d\n",
+			__func__, status);
 	}
 
 	return;
@@ -383,7 +385,9 @@ resubmit_int_urb:
 		status = usb_submit_urb(dev->inturb, GFP_ATOMIC);
 		if (status) {
 			usb_unanchor_urb(dev->inturb);
-			dev_err(dev->devicep, "%s: Error re-submitting Int URB %d\n",
+			if (status != -ENODEV)
+				dev_err(dev->devicep,
+				"%s: Error re-submitting Int URB %d\n",
 				__func__, status);
 		}
 	}
@@ -397,8 +401,9 @@ int rmnet_usb_ctrl_start_rx(struct rmnet_ctrl_dev *dev)
 	retval = usb_submit_urb(dev->inturb, GFP_KERNEL);
 	if (retval < 0) {
 		usb_unanchor_urb(dev->inturb);
-		dev_err(dev->devicep, "%s Intr submit %d\n", __func__,
-				retval);
+		if (retval != -ENODEV)
+			dev_err(dev->devicep,
+			"%s Intr submit %d\n", __func__, retval);
 	}
 
 	return retval;
@@ -527,7 +532,9 @@ static int rmnet_usb_ctrl_write(struct rmnet_ctrl_dev *dev,
 	dev->snd_encap_cmd_cnt++;
 	result = usb_submit_urb(sndurb, GFP_KERNEL);
 	if (result < 0) {
-		dev_err(dev->devicep, "%s: Submit URB error %d\n",
+		if (result != -ENODEV)
+			dev_err(dev->devicep,
+			"%s: Submit URB error %d\n",
 			__func__, result);
 		dev->snd_encap_cmd_cnt--;
 		usb_autopm_put_interface(dev->intf);
@@ -930,9 +937,7 @@ int rmnet_usb_ctrl_probe(struct usb_interface *intf,
 		dev->intf->cur_altsetting->desc.bInterfaceNumber;
 	dev->in_ctlreq->wLength = cpu_to_le16(DEFAULT_READ_URB_LENGTH);
 
-	interval = max((int)int_in->desc.bInterval,
-			(udev->speed == USB_SPEED_HIGH) ? HS_INTERVAL
-							: FS_LS_INTERVAL);
+	interval = int_in->desc.bInterval;
 
 	usb_fill_int_urb(dev->inturb, udev,
 			 dev->int_pipe,

@@ -100,6 +100,10 @@ config CRYPTO_MANAGER2
 	select CRYPTO_BLKCIPHER2
 	select CRYPTO_PCOMP2
 
+config CRYPTO_ABLK_HELPER
+	tristate
+	select CRYPTO_CRYPTD
+
 config CRYPTO_USER
 	tristate "Userspace cryptographic algorithm configuration"
 	depends on NET
@@ -271,17 +275,6 @@ config CRYPTO_XTS
 	  can't handle a sectorsize which is not a multiple of 16 bytes.
 
 comment "Hash modes"
-
-config CRYPTO_CMAC
-	tristate "CMAC support"
-	select CRYPTO_HASH
-	select CRYPTO_MANAGER
-	help
-	  Cipher-based Message Authentication Code (CMAC) specified by
-	  The National Institute of Standards and Technology (NIST).
-
-	  https://tools.ietf.org/html/rfc4493
-	  http://csrc.nist.gov/publications/nistpubs/800-38B/SP_800-38B.pdf
 
 config CRYPTO_HMAC
 	tristate "HMAC support"
@@ -465,6 +458,13 @@ config CRYPTO_SHA256
 
 	  This code also includes SHA-224, a 224 bit hash with 112 bits
 	  of security against collision attacks.
+
+config CRYPTO_SHA256_ARM
+	tristate "SHA-224/256 digest algorithm (ARM-asm and NEON)"
+	select CRYPTO_HASH
+	help
+	  SHA-256 secure hash standard (DFIPS 180-2) implemented
+	  using optimized ARM assembler and NEON, when available.
 
 config CRYPTO_SHA512
 	tristate "SHA384 and SHA512 digest algorithms"

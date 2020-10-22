@@ -102,6 +102,11 @@ static void set_dload_mode(int on)
 	}
 }
 
+static bool get_dload_mode(void)
+{
+	return dload_mode_enabled;
+}
+
 static void enable_emergency_dload_mode(void)
 {
 	if (emergency_dload_mode_addr) {
@@ -113,6 +118,10 @@ static void enable_emergency_dload_mode(void)
 		__raw_writel(EMERGENCY_DLOAD_MAGIC3,
 				emergency_dload_mode_addr +
 				(2 * sizeof(unsigned int)));
+
+		/* Need disable the pmic wdt, then the emergency dload mode
+		 * will not auto reset. */
+		qpnp_pon_wd_config(0);
 		mb();
 	}
 }
@@ -265,13 +274,19 @@ static void msm_restart_prepare(const char *cmd)
 
 	pm8xxx_reset_pwr_off(1);
 
-	qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+	/* Hard reset the PMIC unless memory contents must be maintained. */
+	if (get_dload_mode() || (cmd != NULL && cmd[0] != '\0'))
+		qpnp_pon_system_pwr_off(PON_POWER_OFF_WARM_RESET);
+	else
+		qpnp_pon_system_pwr_off(PON_POWER_OFF_HARD_RESET);
 
 	if (cmd != NULL) {
 		if (!strncmp(cmd, "bootloader", 10)) {
 			__raw_writel(0x77665500, restart_reason);
 		} else if (!strncmp(cmd, "recovery", 8)) {
 			__raw_writel(0x77665502, restart_reason);
+		} else if (!strcmp(cmd, "rtc")) {
+			__raw_writel(0x77665503, restart_reason);
 		} else if (!strncmp(cmd, "oem-", 4)) {
 			unsigned long code;
 			code = simple_strtoul(cmd + 4, NULL, 16) & 0xff;
@@ -281,8 +296,6 @@ static void msm_restart_prepare(const char *cmd)
 		} else {
 			__raw_writel(0x77665501, restart_reason);
 		}
-	} else {
-		__raw_writel(0x77665501, restart_reason);
 	}
 #ifdef CONFIG_LGE_HANDLE_PANIC
 	if (restart_mode == RESTART_DLOAD)

@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -23,7 +23,11 @@
 #include <asm/ioctls.h>
 #include "audio_utils.h"
 
-#define FRAME_SIZE            (1 + ((1536+sizeof(struct meta_out_dsp)) * 5))
+#define MIN_FRAME_SIZE  1536
+#define NUM_FRAMES     5
+#define META_SIZE      (sizeof(struct meta_out_dsp))
+#define FRAME_SIZE     (1 + ((MIN_FRAME_SIZE + META_SIZE) * NUM_FRAMES))
+
 static int audio_in_pause(struct q6audio_in  *audio)
 {
 	int rc;
@@ -100,7 +104,7 @@ int audio_in_enable(struct q6audio_in  *audio)
 int audio_in_disable(struct q6audio_in  *audio)
 {
 	int rc = 0;
-	if (audio->opened) {
+	if (!audio->stopped) {
 		audio->enabled = 0;
 		audio->opened = 0;
 		pr_debug("%s:session id %d: inbytes[%d] insamples[%d]\n",
@@ -198,6 +202,7 @@ long audio_in_ioctl(struct file *file,
 
 	if (cmd == AUDIO_GET_STATS) {
 		struct msm_audio_stats stats;
+		memset(&stats, 0, sizeof(stats));
 		stats.byte_count = atomic_read(&audio->in_bytes);
 		stats.sample_count = atomic_read(&audio->in_samples);
 		if (copy_to_user((void *) arg, &stats, sizeof(stats)))
@@ -258,21 +263,23 @@ long audio_in_ioctl(struct file *file,
 			rc = -EINVAL;
 			break;
 		}
-                if ((cfg.buffer_size > FRAME_SIZE) ||
-                        (cfg.buffer_count != FRAME_NUM)) {
-                        rc = -EINVAL;
-                        break;
-                }
+		if ((cfg.buffer_size > FRAME_SIZE) ||
+			(cfg.buffer_count != FRAME_NUM)) {
+			rc = -EINVAL;
+			break;
+		}
 		audio->str_cfg.buffer_size = cfg.buffer_size;
 		audio->str_cfg.buffer_count = cfg.buffer_count;
-		rc = q6asm_audio_client_buf_alloc(OUT, audio->ac,
+		if(audio->opened){
+			rc = q6asm_audio_client_buf_alloc(OUT,audio->ac,
 				ALIGN_BUF_SIZE(audio->str_cfg.buffer_size),
 				audio->str_cfg.buffer_count);
-		if (rc < 0) {
+			if (rc < 0) {
 			pr_err("%s: session id %d: Buffer Alloc failed rc=%d\n",
-					__func__, audio->ac->session, rc);
+				__func__, audio->ac->session, rc);
 			rc = -ENOMEM;
 			break;
+			}
 		}
 		audio->buf_alloc |= BUF_ALLOC_OUT;
 		rc = 0;
@@ -354,14 +361,16 @@ long audio_in_ioctl(struct file *file,
 		audio->pcm_cfg.buffer_size  = cfg.buffer_size;
 		audio->pcm_cfg.channel_count = cfg.channel_count;
 		audio->pcm_cfg.sample_rate = cfg.sample_rate;
-		rc = q6asm_audio_client_buf_alloc(IN, audio->ac,
-			ALIGN_BUF_SIZE(audio->pcm_cfg.buffer_size),
-			audio->pcm_cfg.buffer_count);
-		if (rc < 0) {
-			pr_err("%s:session id %d: Buffer Alloc failed\n",
-				__func__, audio->ac->session);
-			rc = -ENOMEM;
-			break;
+		if(audio->opened && audio->feedback == NON_TUNNEL_MODE){
+			rc = q6asm_audio_client_buf_alloc(IN, audio->ac,
+				ALIGN_BUF_SIZE(audio->pcm_cfg.buffer_size),
+				audio->pcm_cfg.buffer_count);
+			if(rc < 0){
+				pr_err("%s:session id %d: Buffer Alloc failed\n",
+						__func__,audio->ac->session);
+				rc = -ENOMEM;
+				break;
+			}
 		}
 		audio->buf_alloc |= BUF_ALLOC_IN;
 		rc = 0;
@@ -394,7 +403,7 @@ ssize_t audio_in_read(struct file *file,
 	uint32_t mfield_size = (audio->buf_cfg.meta_info_enable == 0) ? 0 :
 		(sizeof(unsigned char) +
 		(sizeof(struct meta_out_dsp)*(audio->buf_cfg.frames_per_buf)));
-
+	memset(&meta, 0, sizeof(meta));
 	pr_debug("%s:session id %d: read - %d\n", __func__, audio->ac->session,
 			count);
 	if (!audio->enabled)
@@ -486,7 +495,7 @@ ssize_t audio_in_read(struct file *file,
 			count -= bytes_to_copy;
 			buf += bytes_to_copy;
 		} else {
-			pr_err("%s:session id %d: short read data[%p] bytesavail[%d]bytesrequest[%d]\n",
+			pr_err("%s:session id %d: short read data[%pK] bytesavail[%d]bytesrequest[%d]\n",
 				__func__,
 				audio->ac->session,
 				data, size, count);

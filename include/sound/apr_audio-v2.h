@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
 *
 * This program is free software; you can redistribute it and/or modify
 * it under the terms of the GNU General Public License version 2 and
@@ -82,13 +82,14 @@ struct adm_cmd_matrix_map_routings_v5 {
 */
 #define ADM_CMD_DEVICE_OPEN_V5                          0x00010326
 
-#define ADM_BIT_SHIFT_DEVICE_PERF_MODE_FLAG                           13
+/* Definition for a low latency stream session. */
+#define ADM_LOW_LATENCY_DEVICE_SESSION			0x2000
+
+/* Definition for a ultra low latency stream session. */
+#define ADM_ULTRA_LOW_LATENCY_DEVICE_SESSION		0x4000
 
 /* Definition for a legacy device session. */
 #define ADM_LEGACY_DEVICE_SESSION                                      0
-
-/* Definition for a low latency stream session. */
-#define ADM_LOW_LATENCY_DEVICE_SESSION                                 1
 
 /* Indicates that endpoint_id_2 is to be ignored.*/
 #define ADM_CMD_COPP_OPEN_END_POINT_ID_2_IGNORE				0xFFFF
@@ -578,6 +579,15 @@ struct adm_cmd_matrix_mute_v5 {
 	/* Clients must set this field to zero.*/
 } __packed;
 
+#define ASM_PARAM_ID_AAC_STEREO_MIX_COEFF_SELECTION_FLAG_V2 (0x00010DD8)
+
+struct asm_aac_stereo_mix_coeff_selection_param_v2 {
+	struct apr_hdr          hdr;
+	u32                     param_id;
+	u32                     param_size;
+	u32                     aac_stereo_mix_coeff_flag;
+} __packed;
+
 /* Allows a client to connect the desired stream to
  * the desired AFE port through the stream router
  *
@@ -642,7 +652,6 @@ struct adm_cmd_connect_afe_port_v5 {
 #define RSVD_2 9
 #define RSVD_3 10
 #define DIGI_MIC_TX 11
-#define GLOBAL_CFG 12
 #define VOICE2_PLAYBACK_TX 0x8002
 #define VOICE_RECORD_RX 0x8003
 #define VOICE_RECORD_TX 0x8004
@@ -1968,6 +1977,14 @@ struct afe_param_id_pseudo_port_cfg {
 	 */
 } __packed;
 
+#define AFE_PARAM_ID_DEVICE_HW_DELAY     0x00010243
+#define AFE_API_VERSION_DEVICE_HW_DELAY  0x1
+
+struct afe_param_id_device_hw_delay_cfg {
+	uint32_t    device_hw_delay_minor_version;
+	uint32_t    delay_in_us;
+} __packed;
+
 union afe_port_config {
 	struct afe_param_id_pcm_cfg               pcm;
 	struct afe_param_id_i2s_cfg               i2s;
@@ -1976,6 +1993,7 @@ union afe_port_config {
 	struct afe_param_id_rt_proxy_port_cfg     rtproxy;
 	struct afe_param_id_internal_bt_fm_cfg    int_bt_fm;
 	struct afe_param_id_pseudo_port_cfg       pseudo_port;
+	struct afe_param_id_device_hw_delay_cfg   hw_delay;
 } __packed;
 
 struct afe_audioif_config_command_no_payload {
@@ -2246,6 +2264,7 @@ struct afe_port_cmdrsp_get_param_v2 {
 #define VPM_TX_SM_ECNS_COPP_TOPOLOGY			0x00010F71
 #define VPM_TX_DM_FLUENCE_COPP_TOPOLOGY			0x00010F72
 #define VPM_TX_QMIC_FLUENCE_COPP_TOPOLOGY		0x00010F75
+#define VPM_TX_DM_RFECNS_COPP_TOPOLOGY			0x00010F86
 
 /* Memory map regions command payload used by the
  * #ASM_CMD_SHARED_MEM_MAP_REGIONS ,#ADM_CMD_SHARED_MEM_MAP_REGIONS
@@ -2410,6 +2429,19 @@ struct asm_amrwbplus_cfg {
 	u32  amr_lsf_idx;
 } __packed;
 
+struct asm_flac_cfg {
+	u32 sample_rate;
+	u32 ext_sample_rate;
+	u32 min_frame_size;
+	u32 max_frame_size;
+	u16 stream_info_present;
+	u16 min_blk_size;
+	u16 max_blk_size;
+	u16 ch_cfg;
+	u16 sample_size;
+	u16 md5_sum;
+};
+
 struct asm_softpause_params {
 	u32 enable;
 	u32 period;
@@ -2480,6 +2512,8 @@ struct asm_softvolume_params {
 #define ASM_MEDIA_FMT_MULTI_CHANNEL_PCM_V2 0x00010DA5
 
 #define ASM_STREAM_POSTPROC_TOPO_ID_DEFAULT 0x00010BE4
+
+#define ASM_STREAM_POSTPROC_TOPO_ID_NONE 0x00010C68
 
 #define ASM_MEDIA_FMT_EVRCB_FS 0x00010BEF
 
@@ -2751,6 +2785,73 @@ struct asm_aac_enc_cfg_v2 {
  * Native mode indicates that encoding must be performed with the
  * sampling rate at the input.
  * The sampling rate must not change during encoding.
+ */
+
+} __packed;
+
+struct asm_flac_fmt_blk_v2 {
+	struct apr_hdr hdr;
+	struct asm_data_cmd_media_fmt_update_v2 fmtblk;
+
+	u16 is_stream_info_present;
+/* Specifies whether stream information is present in the FLAC format
+ * block.
+ *
+ * Supported values:
+ * - 0 -- Stream information is not present in this message
+ * - 1 -- Stream information is present in this message
+ *
+ * When set to 1, the FLAC bitstream was successfully parsed by the
+ * client, and other fields in the FLAC format block can be read by the
+ * decoder to get metadata stream information.
+ */
+
+	u16 num_channels;
+/* Number of channels for decoding.
+ * Supported values: 1 to 2
+ */
+
+	u16 min_blk_size;
+/* Minimum block size (in samples) used in the stream. It must be less
+ * than or equal to max_blk_size.
+ */
+
+	u16 max_blk_size;
+/* Maximum block size (in samples) used in the stream. If the
+ * minimum block size equals the maximum block size, a fixed block
+ * size stream is implied.
+ */
+
+	u16 md5_sum[8];
+/* MD5 signature array of the unencoded audio data. This allows the
+ * decoder to determine if an error exists in the audio data, even when
+ * the error does not result in an invalid bitstream.
+ */
+
+	u32 sample_rate;
+/* Number of samples per second.
+ * Supported values: 8000 to 48000 Hz
+ */
+
+	u32 min_frame_size;
+/* Minimum frame size used in the stream.
+ * Supported values:
+ * - > 0 bytes
+ * - 0 -- The value is unknown
+ */
+
+	u32 max_frame_size;
+/* Maximum frame size used in the stream.
+ * Supported values:
+ * -- > 0 bytes
+ * -- 0 . The value is unknown
+ */
+
+	u16 sample_size;
+/* Bits per sample.Supported values: 8, 16 */
+
+	u16 reserved;
+/* Clients must set this field to zero
  */
 
 } __packed;
@@ -3158,6 +3259,9 @@ struct asm_amrwbplus_fmt_blk_v2 {
 #define ASM_MEDIA_FMT_AC3_DEC                   0x00010BF6
 #define ASM_MEDIA_FMT_EAC3_DEC                   0x00010C3C
 #define ASM_MEDIA_FMT_DTS                    0x00010D88
+#define ASM_MEDIA_FMT_MP2                    0x00010DE9
+#define ASM_MEDIA_FMT_FLAC                   0x00010C16
+
 
 /* Media format ID for adaptive transform acoustic coding. This
  * ID is used by the #ASM_STREAM_CMD_OPEN_WRITE_COMPRESSED command
@@ -3665,6 +3769,7 @@ struct asm_session_cmd_run_v2 {
 } __packed;
 
 #define ASM_SESSION_CMD_PAUSE 0x00010BD3
+#define ASM_SESSION_CMD_SUSPEND 0x00010DEC
 #define ASM_SESSION_CMD_GET_SESSIONTIME_V3 0x00010D9D
 #define ASM_SESSION_CMD_REGISTER_FOR_RX_UNDERFLOW_EVENTS 0x00010BD5
 
@@ -3817,11 +3922,12 @@ struct asm_session_cmdrsp_get_path_delay_v2 {
 #define ASM_STREAM_CMD_OPEN_WRITE_V2       0x00010D8F
 #define ASM_STREAM_CMD_OPEN_WRITE_V3       0x00010DB3
 
-#define ASM_SHIFT_STREAM_PERF_MODE_FLAG_IN_OPEN_WRITE                     28
+#define ASM_LOW_LATENCY_STREAM_SESSION				0x10000000
+
+#define ASM_ULTRA_LOW_LATENCY_STREAM_SESSION			0x20000000
 
 #define ASM_LEGACY_STREAM_SESSION                                      0
 
-#define ASM_LOW_LATENCY_STREAM_SESSION                                  1
 
 struct asm_stream_cmd_open_write_v3 {
 	struct apr_hdr			hdr;
@@ -3920,6 +4026,9 @@ struct asm_stream_cmd_open_write_v3 {
 
 /* Absolute timestamp is identified by this value.*/
 #define ASM_ABSOLUTEIMESTAMP      1
+
+/* Bit value for Low Latency Tx stream subfield */
+#define ASM_LOW_LATENCY_TX_STREAM_SESSION			1
 
 /* Bit shift for the stream_perf_mode subfield. */
 #define ASM_SHIFT_STREAM_PERF_MODE_FLAG_IN_OPEN_READ              29
@@ -4297,7 +4406,6 @@ struct asm_aac_sbr_ps_flag_param {
 struct asm_aac_dual_mono_mapping_param {
 	struct apr_hdr							hdr;
 	struct asm_stream_cmd_set_encdec_param	encdec;
-	struct asm_enc_cfg_blk_param_v2			encblk;
 	u16    left_channel_sce;
 	u16    right_channel_sce;
 
@@ -6693,6 +6801,7 @@ struct srs_trumedia_params {
 #define LSM_SESSION_CMD_STOP				(0x00012A87)
 
 #define LSM_SESSION_EVENT_DETECTION_STATUS		(0x00012B00)
+#define LSM_SESSION_EVENT_DETECTION_STATUS_V2		(0x00012B01)
 
 #define LSM_MODULE_ID_VOICE_WAKEUP			(0x00012C00)
 #define LSM_PARAM_ID_ENDPOINT_DETECT_THRESHOLD		(0x00012C01)
@@ -6702,7 +6811,7 @@ struct srs_trumedia_params {
 #define LSM_PARAM_ID_KEYWORD_DETECT_SENSITIVITY		(0x00012C05)
 #define LSM_PARAM_ID_USER_DETECT_SENSITIVITY		(0x00012C06)
 #define LSM_PARAM_ID_FEATURE_COMPENSATION_DATA		(0x00012C07)
-
+#define LSM_PARAM_ID_MIN_CONFIDENCE_LEVELS		(0x00012C07)
 
 /* HW MAD specific */
 #define AFE_MODULE_HW_MAD				(0x00010230)
@@ -6862,6 +6971,7 @@ struct afe_param_id_clip_bank_sel {
 #define Q6AFE_LPASS_IBIT_CLK_1_P024_MHZ		 0xFA000
 #define Q6AFE_LPASS_IBIT_CLK_768_KHZ		 0xBB800
 #define Q6AFE_LPASS_IBIT_CLK_512_KHZ		 0x7D000
+#define Q6AFE_LPASS_IBIT_CLK_256_KHZ		 0x3E800
 #define Q6AFE_LPASS_IBIT_CLK_DISABLE		     0x0
 
 /* Supported LPASS CLK sources */
@@ -7144,6 +7254,11 @@ struct afe_port_cmd_set_aanc_acdb_table {
 /* Dolby DAP topology */
 #define DOLBY_ADM_COPP_TOPOLOGY_ID	0x0001033B
 
+/* RMS value from DSP */
+#define RMS_MODULEID_APPI_PASSTHRU  0x10009011
+#define RMS_PARAM_FIRST_SAMPLE 0x10009012
+#define RMS_PAYLOAD_LEN 4
+
 struct afe_svc_cmd_set_clip_bank_selection {
 	struct apr_hdr hdr;
 	struct afe_svc_cmd_set_param param;
@@ -7152,8 +7267,102 @@ struct afe_svc_cmd_set_clip_bank_selection {
 } __packed;
 
 /* Ultrasound supported formats */
-#define US_POINT_EPOS_FORMAT 0x00012310
-#define US_RAW_FORMAT        0x0001127C
-#define US_PROX_FORMAT       0x0001272B
+#define US_POINT_EPOS_FORMAT_V2 0x0001272D
+#define US_RAW_FORMAT_V2        0x0001272C
+#define US_PROX_FORMAT_V4       0x0001273B
+#define US_RAW_SYNC_FORMAT      0x0001272F
+#define US_GES_SYNC_FORMAT      0x00012730
 
+/* Command for Matrix or Stream Router */
+#define ASM_SESSION_CMD_SET_MTMX_STRTR_PARAMS_V2    0x00010DCE
+/* Module for AVSYNC */
+#define ASM_SESSION_MTMX_STRTR_MODULE_ID_AVSYNC    0x00010DC6
+
+/* Parameter used by #ASM_SESSION_MTMX_STRTR_MODULE_ID_AVSYNC to specify the
+ * render window start value. This parameter is supported only for a Set
+ * command (not a Get command) in the Rx direction
+ * (#ASM_SESSION_CMD_SET_MTMX_STRTR_PARAMS_V2).
+ * Render window start is a value (session time minus timestamp, or ST-TS)
+ * below which frames are held, and after which frames are immediately
+ * rendered.
+ */
+#define ASM_SESSION_MTMX_STRTR_PARAM_RENDER_WINDOW_START_V2 0x00010DD1
+
+/* Parameter used by #ASM_SESSION_MTMX_STRTR_MODULE_ID_AVSYNC to specify the
+ * render window end value. This parameter is supported only for a Set
+ * command (not a Get command) in the Rx direction
+ * (#ASM_SESSION_CMD_SET_MTMX_STRTR_PARAMS_V2). Render window end is a value
+ * (session time minus timestamp) above which frames are dropped, and below
+ * which frames are immediately rendered.
+ */
+#define ASM_SESSION_MTMX_STRTR_PARAM_RENDER_WINDOW_END_V2   0x00010DD2
+
+/* Generic payload of the window parameters in the
+ * #ASM_SESSION_MTMX_STRTR_MODULE_ID_AVSYNC module.
+ * This payload is supported only for a Set command
+ * (not a Get command) on the Rx path.
+ */
+struct asm_session_mtmx_strtr_param_window_v2_t {
+	u32    window_lsw;
+	/* Lower 32 bits of the render window start value. */
+
+	u32    window_msw;
+	/* Upper 32 bits of the render window start value.
+
+	 * The 64-bit number formed by window_lsw and window_msw specifies a
+	 * signed 64-bit window value in microseconds. The sign extension is
+	 * necessary. This value is used by the following parameter IDs:
+	 * #ASM_SESSION_MTMX_STRTR_PARAM_RENDER_WINDOW_START_V2
+	 * #ASM_SESSION_MTMX_STRTR_PARAM_RENDER_WINDOW_END_V2
+	 * #ASM_SESSION_MTMX_STRTR_PARAM_STAT_WINDOW_START_V2
+	 * #ASM_SESSION_MTMX_STRTR_PARAM_STAT_WINDOW_END_V2
+	 * The value depends on which parameter ID is used.
+	 * The aDSP honors the windows at a granularity of 1 ms.
+	 */
+};
+
+struct asm_session_cmd_set_mtmx_strstr_params_v2 {
+	uint32_t                  data_payload_addr_lsw;
+	/* Lower 32 bits of the 64-bit data payload address. */
+
+	uint32_t                  data_payload_addr_msw;
+	/* Upper 32 bits of the 64-bit data payload address.
+	 * If the address is not sent (NULL), the message is in the payload.
+	 * If the address is sent (non-NULL), the parameter data payloads
+	 * begin at the specified address.
+	 */
+
+	uint32_t                  mem_map_handle;
+	/* Unique identifier for an address. This memory map handle is returned
+	 * by the aDSP through the #ASM_CMD_SHARED_MEM_MAP_REGIONS command.
+	 * values
+	 * - NULL -- Parameter data payloads are within the message payload
+	 * (in-band).
+	 * - Non-NULL -- Parameter data payloads begin at the address specified
+	 * in the data_payload_addr_lsw and data_payload_addr_msw fields
+	 * (out-of-band).
+	 */
+
+	uint32_t                  data_payload_size;
+	/* Actual size of the variable payload accompanying the message, or in
+	 * shared memory. This field is used for parsing the parameter payload.
+	 * values > 0 bytes
+	 */
+
+	uint32_t                  direction;
+	/* Direction of the entity (matrix mixer or stream router) on which
+	 * the parameter is to be set.
+	 * values
+	 * - 0 -- Rx (for Rx stream router or Rx matrix mixer)
+	 * - 1 -- Tx (for Tx stream router or Tx matrix mixer)
+	 */
+};
+
+struct asm_mtmx_strtr_params {
+	struct apr_hdr  hdr;
+	struct asm_session_cmd_set_mtmx_strstr_params_v2 param;
+	struct asm_stream_param_data_v2 data;
+	u32 window_lsw;
+	u32 window_msw;
+} __packed;
 #endif /*_APR_AUDIO_V2_H_ */

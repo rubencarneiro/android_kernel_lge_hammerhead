@@ -1,6 +1,6 @@
 /* arch/arm/mach-msm/smp2p_gpio.c
  *
- * Copyright (c) 2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013,2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -337,7 +337,7 @@ static int smp2p_irq_map(struct irq_domain *domain_ptr, unsigned int virq,
 
 	chip = domain_ptr->host_data;
 	if (!chip) {
-		SMP2P_ERR("%s: invalid domain ptr %p\n", __func__, domain_ptr);
+		SMP2P_ERR("%s: invalid domain ptr %pK\n", __func__, domain_ptr);
 		return -ENODEV;
 	}
 
@@ -420,7 +420,7 @@ static void msm_summary_irq_handler(struct smp2p_chip_dev *chip,
 		spin_unlock_irqrestore(&chip->irq_lock, flags);
 
 		if (trigger_interrrupt) {
-			SMP2P_GPIO(
+			SMP2P_INFO(
 				"'%s':%d GPIO bit %d virq %d (%s,%s) - edge %s triggering\n",
 				chip->name, chip->remote_pid, i,
 				chip->irq_base + i,

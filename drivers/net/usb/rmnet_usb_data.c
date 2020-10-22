@@ -1,4 +1,4 @@
-/* Copyright (c) 2011-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2011-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -362,12 +362,9 @@ static struct sk_buff *rmnet_usb_tx_fixup(struct usbnet *dev,
 	return skb;
 }
 
-static __be16 rmnet_ip_type_trans(struct sk_buff *skb,
-	struct net_device *dev)
+static __be16 rmnet_ip_type_trans(struct sk_buff *skb)
 {
 	__be16	protocol = 0;
-
-	skb->dev = dev;
 
 	switch (skb->data[0] & 0xf0) {
 	case 0x40:
@@ -404,7 +401,6 @@ static void rmnet_usb_rx_complete(struct urb *rx_urb)
 			/*map urb to actual network iface based on mux id*/
 			unet_id = unet_offset + mux_id;
 			skb->dev = unet_list[unet_id]->net;
-			entry->dev = unet_list[unet_id];
 		}
 	}
 
@@ -414,7 +410,7 @@ static void rmnet_usb_rx_complete(struct urb *rx_urb)
 static int rmnet_usb_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 {
 	if (test_bit(RMNET_MODE_LLP_IP, &dev->data[0]))
-		skb->protocol = rmnet_ip_type_trans(skb, dev->net);
+		skb->protocol = rmnet_ip_type_trans(skb);
 	else /*set zero for eth mode*/
 		skb->protocol = 0;
 
@@ -476,9 +472,10 @@ static const struct net_device_ops rmnet_usb_ops_ip = {
 static int rmnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct usbnet	*unet = netdev_priv(dev);
-	u32		old_opmode;
+	unsigned long	old_opmode;
 	int		prev_mtu = dev->mtu;
 	int		rc = 0;
+	struct rmnet_ioctl_data_s ioctl_data;
 
 	old_opmode = unet->data[0]; /*data[0] saves operation mode*/
 	/* Process IOCTL command */
@@ -517,9 +514,12 @@ static int rmnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 		break;
 
 	case RMNET_IOCTL_GET_LLP:	/* Get link protocol state */
-		ifr->ifr_ifru.ifru_data = (void *)(unet->data[0]
+		ioctl_data.u.operation_mode = (unet->data[0]
 						& (RMNET_MODE_LLP_ETH
 						| RMNET_MODE_LLP_IP));
+		if (copy_to_user(ifr->ifr_ifru.ifru_data, &ioctl_data,
+			sizeof(struct rmnet_ioctl_data_s)))
+			rc = -EFAULT;
 		break;
 
 	case RMNET_IOCTL_SET_QOS_ENABLE:	/* Set QoS header enabled*/
@@ -535,12 +535,18 @@ static int rmnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 		break;
 
 	case RMNET_IOCTL_GET_QOS:		/* Get QoS header state */
-		ifr->ifr_ifru.ifru_data = (void *)(unet->data[0]
+		ioctl_data.u.operation_mode = (unet->data[0]
 						& RMNET_MODE_QOS);
+		if (copy_to_user(ifr->ifr_ifru.ifru_data, &ioctl_data,
+			sizeof(struct rmnet_ioctl_data_s)))
+			rc = -EFAULT;
 		break;
 
 	case RMNET_IOCTL_GET_OPMODE:		/* Get operation mode*/
-		ifr->ifr_ifru.ifru_data = (void *)unet->data[0];
+		ioctl_data.u.operation_mode = unet->data[0];
+		if (copy_to_user(ifr->ifr_ifru.ifru_data, &ioctl_data,
+			sizeof(struct rmnet_ioctl_data_s)))
+			rc = -EFAULT;
 		break;
 
 	case RMNET_IOCTL_OPEN:			/* Open transport port */
@@ -554,13 +560,12 @@ static int rmnet_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 		break;
 
 	default:
-		dev_err(&unet->intf->dev, "[%s] error: "
-			"rmnet_ioct called for unsupported cmd[%d]",
+		dev_dbg(&unet->intf->dev, "[%s] error: rmnet_ioctl called for unsupported cmd[0x%x]\n",
 			dev->name, cmd);
 		return -EINVAL;
 	}
 
-	DBG2("[%s] %s: cmd=0x%x opmode old=0x%08x new=0x%08lx\n",
+	DBG2("[%s] %s: cmd=0x%x opmode old=0x%08lx new=0x%08lx\n",
 		dev->name, __func__, cmd, old_opmode, unet->data[0]);
 
 	return rc;

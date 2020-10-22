@@ -41,13 +41,13 @@
 #include <mach/rpm-smd.h>
 #include <mach/rpm-regulator-smd.h>
 #include <mach/socinfo.h>
-#include <mach/msm_bus_board.h>
+#include <mach/msm_smem.h>
 #include "../board-dt.h"
 #include "../clock.h"
 #include "../devices.h"
 #include "../spm.h"
+#include "../pm.h"
 #include "../modem_notifier.h"
-#include "../lpm_resources.h"
 #include "../platsmp.h"
 #include <mach/msm_serial_hs_lite.h>
 #include <mach/board_lge.h>
@@ -100,10 +100,11 @@ extern void init_bcm_wifi(void);
 
 void __init msm8974_add_drivers(void)
 {
+	msm_smem_init();
 	msm_init_modem_notifier_list();
 	msm_smd_init();
 	msm_rpm_driver_init();
-	msm_lpmrs_module_init();
+	msm_pm_sleep_status_init();
 	rpm_regulator_smd_driver_init();
 	msm_spm_device_init();
 	krait_power_init();
@@ -152,8 +153,6 @@ static struct of_dev_auxdata msm8974_auxdata_lookup[] __initdata = {
 			"msm-tsens", NULL),
 	OF_DEV_AUXDATA("qcom,qcedev", 0xFD440000, \
 			"qcedev.0", NULL),
-	OF_DEV_AUXDATA("qcom,qcrypto", 0xFD440000, \
-			"qcrypto.0", NULL),
 	OF_DEV_AUXDATA("qcom,hsic-host", 0xF9A00000, \
 			"msm_hsic_host", NULL),
 	{}

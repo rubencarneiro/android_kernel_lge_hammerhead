@@ -1,6 +1,6 @@
 /* arch/arm/mach-msm/smp2p_debug.c
  *
- * Copyright (c) 2013, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2013,2016 The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -41,7 +41,7 @@ static void smp2p_int_stats(struct seq_file *s)
 			continue;
 
 		seq_printf(s,
-			"| %5s (%d) | %11u | %10u | %10u | %p | %08x |\n",
+			"| %5s (%d) | %11u | %10u | %10u | %pK | %08x |\n",
 			int_cfg[pid].name,
 			pid, int_cfg[pid].in_int_id,
 			int_cfg[pid].in_interrupt_count,
@@ -141,9 +141,11 @@ static int smp2p_item_header3(char *buf, int max, struct smp2p_smem *item_ptr)
 	}
 
 	i += scnprintf(buf + i, max - i,
-		"Entries Valid/Max: %d/%d",
+		"Entries #/Max: %d/%d Flags: %c%c",
 		SMP2P_GET_ENT_VALID(item_ptr->valid_total_ent),
-		SMP2P_GET_ENT_TOTAL(item_ptr->valid_total_ent)
+		SMP2P_GET_ENT_TOTAL(item_ptr->valid_total_ent),
+		item_ptr->flags & SMP2P_FLAGS_RESTART_ACK_MASK ? 'A' : 'a',
+		item_ptr->flags & SMP2P_FLAGS_RESTART_DONE_MASK ? 'D' : 'd'
 		);
 
 	return i;

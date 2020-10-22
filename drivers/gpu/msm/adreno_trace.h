@@ -1,4 +1,4 @@
-/* Copyright (c) 2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -21,7 +21,6 @@
 #define TRACE_INCLUDE_FILE adreno_trace
 
 #include <linux/tracepoint.h>
-#include "kgsl_device.h"
 
 TRACE_EVENT(adreno_cmdbatch_queued,
 	TP_PROTO(struct kgsl_cmdbatch *cmdbatch, unsigned int queued),
@@ -42,9 +41,7 @@ TRACE_EVENT(adreno_cmdbatch_queued,
 		"ctx=%u ts=%u queued=%u flags=%s",
 			__entry->id, __entry->timestamp, __entry->queued,
 			__entry->flags ? __print_flags(__entry->flags, "|",
-				{ KGSL_CONTEXT_SYNC, "SYNC" },
-				{ KGSL_CONTEXT_END_OF_FRAME, "EOF" })
-				: "none"
+				ADRENO_CMDBATCH_FLAGS) : "none"
 	)
 );
 
@@ -54,17 +51,21 @@ DECLARE_EVENT_CLASS(adreno_cmdbatch_template,
 	TP_STRUCT__entry(
 		__field(unsigned int, id)
 		__field(unsigned int, timestamp)
-		__field(unsigned int, inflight)
+		__field(int, inflight)
+		__field(unsigned int, flags)
 	),
 	TP_fast_assign(
 		__entry->id = cmdbatch->context->id;
 		__entry->timestamp = cmdbatch->timestamp;
 		__entry->inflight = inflight;
+		__entry->flags = cmdbatch->flags;
 	),
 	TP_printk(
-		"ctx=%u ts=%u inflight=%u",
+		"ctx=%u ts=%u inflight=%d flags=%s",
 			__entry->id, __entry->timestamp,
-			__entry->inflight
+			__entry->inflight,
+			__entry->flags ? __print_flags(__entry->flags, "|",
+							{ KGSL_CMDBATCH_MARKER, "MARKER" }) : "none"
 	)
 );
 
@@ -79,22 +80,26 @@ TRACE_EVENT(adreno_cmdbatch_retired,
 	TP_STRUCT__entry(
 		__field(unsigned int, id)
 		__field(unsigned int, timestamp)
-		__field(unsigned int, inflight)
+		__field(int, inflight)
 		__field(unsigned int, recovery)
+		__field(unsigned int, flags)
 	),
 	TP_fast_assign(
 		__entry->id = cmdbatch->context->id;
 		__entry->timestamp = cmdbatch->timestamp;
 		__entry->inflight = inflight;
 		__entry->recovery = cmdbatch->fault_recovery;
+		__entry->flags = cmdbatch->flags;
 	),
 	TP_printk(
-		"ctx=%u ts=%u inflight=%u recovery=%s",
+		"ctx=%u ts=%u inflight=%d recovery=%s flags=%s",
 			__entry->id, __entry->timestamp,
 			__entry->inflight,
 			__entry->recovery ?
 				__print_flags(__entry->recovery, "|",
-				ADRENO_FT_TYPES) : "none"
+				ADRENO_FT_TYPES) : "none",
+			__entry->flags ? __print_flags(__entry->flags, "|",
+				{ KGSL_CMDBATCH_MARKER, "MARKER" }) : "none"
 	)
 );
 
@@ -263,36 +268,6 @@ TRACE_EVENT(adreno_gpu_fault,
 		__entry->ctx, __entry->ts, __entry->status, __entry->wptr,
 		__entry->rptr, __entry->ib1base, __entry->ib1size,
 		__entry->ib2base, __entry->ib2size)
-);
-
-TRACE_EVENT(kgsl_user_pwrlevel_constraint,
-
-	TP_PROTO(struct kgsl_device *device, unsigned int id, unsigned int type,
-		unsigned int sub_type),
-
-	TP_ARGS(device, id, type, sub_type),
-
-	TP_STRUCT__entry(
-		__string(device_name, device->name)
-		__field(unsigned int, id)
-		__field(unsigned int, type)
-		__field(unsigned int, sub_type)
-	),
-
-	TP_fast_assign(
-		__assign_str(device_name, device->name);
-		__entry->id = id;
-		__entry->type = type;
-		__entry->sub_type = sub_type;
-	),
-
-	TP_printk(
-		"d_name=%s ctx=%u constraint_type=%s constraint_subtype=%s",
-		__get_str(device_name), __entry->id,
-		__print_symbolic(__entry->type, KGSL_CONSTRAINT_TYPES),
-		__print_symbolic(__entry->sub_type,
-		KGSL_CONSTRAINT_PWRLEVEL_SUBTYPES)
-	)
 );
 
 #endif /* _ADRENO_TRACE_H */

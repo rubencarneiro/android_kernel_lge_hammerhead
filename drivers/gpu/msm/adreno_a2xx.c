@@ -1352,8 +1352,7 @@ static int a2xx_create_gmem_shadow(struct adreno_device *adreno_dev,
 	calc_gmemsize(&drawctxt->context_gmem_shadow, adreno_dev->gmem_size);
 	tmp_ctx.gmem_base = adreno_dev->gmem_base;
 
-	result = kgsl_allocate(&(adreno_dev->dev),
-		&drawctxt->context_gmem_shadow.gmemshadow,
+	result = kgsl_allocate(&drawctxt->context_gmem_shadow.gmemshadow,
 		drawctxt->base.proc_priv->pagetable,
 		drawctxt->context_gmem_shadow.size);
 
@@ -1451,7 +1450,7 @@ static int a2xx_drawctxt_create(struct adreno_device *adreno_dev,
 	 * and texture and vertex buffer storage too
 	 */
 
-	ret = kgsl_allocate(&(adreno_dev->dev), &drawctxt->gpustate,
+	ret = kgsl_allocate(&drawctxt->gpustate,
 		drawctxt->base.proc_priv->pagetable, _context_size(adreno_dev));
 
 	if (ret)
@@ -1804,7 +1803,7 @@ static void a2xx_cp_intrcallback(struct kgsl_device *device)
 	kgsl_regwrite(device, REG_CP_INT_ACK, status);
 
 	if (status & (CP_INT_CNTL__IB1_INT_MASK | CP_INT_CNTL__RB_INT_MASK)) {
-		queue_work(device->work_queue, &device->ts_expired_ws);
+		queue_work(device->work_queue, &device->event_work);
 		adreno_dispatcher_schedule(device);
 	}
 }
@@ -1972,17 +1971,19 @@ static int a2xx_rb_init(struct adreno_device *adreno_dev,
 	return 0;
 }
 
-static unsigned int a2xx_busy_cycles(struct adreno_device *adreno_dev)
+static void a2xx_busy_cycles(struct adreno_device *adreno_dev,
+				struct adreno_busy_data *data)
 {
 	struct kgsl_device *device = &adreno_dev->dev;
-	unsigned int reg, val;
+	unsigned int reg;
 
+	memset(data, 0, sizeof(*data));
 	/* Freeze the counter */
 	kgsl_regwrite(device, REG_CP_PERFMON_CNTL,
 		REG_PERF_MODE_CNT | REG_PERF_STATE_FREEZE);
 
 	/* Get the value */
-	kgsl_regread(device, REG_RBBM_PERFCOUNTER1_LO, &val);
+	kgsl_regread(device, REG_RBBM_PERFCOUNTER1_LO, &data->gpu_busy);
 
 	/* Reset the counter */
 	kgsl_regwrite(device, REG_CP_PERFMON_CNTL,
@@ -1995,7 +1996,6 @@ static unsigned int a2xx_busy_cycles(struct adreno_device *adreno_dev)
 	kgsl_regwrite(device, REG_CP_PERFMON_CNTL,
 		REG_PERF_MODE_CNT | REG_PERF_STATE_ENABLE);
 
-	return val;
 }
 
 static void a2xx_gmeminit(struct adreno_device *adreno_dev)
@@ -2278,7 +2278,6 @@ static unsigned int a2xx_register_offsets[ADRENO_REG_REGISTER_MAX] = {
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_IB2_BASE, REG_CP_IB2_BASE),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_IB2_BUFSZ, REG_CP_IB2_BUFSZ),
 	ADRENO_REG_DEFINE(ADRENO_REG_CP_TIMESTAMP, REG_CP_TIMESTAMP),
-	ADRENO_REG_DEFINE(ADRENO_REG_CP_ME_RAM_RADDR, REG_CP_ME_RAM_RADDR),
 	ADRENO_REG_DEFINE(ADRENO_REG_SCRATCH_ADDR, REG_SCRATCH_ADDR),
 	ADRENO_REG_DEFINE(ADRENO_REG_SCRATCH_UMSK, REG_SCRATCH_UMSK),
 	ADRENO_REG_DEFINE(ADRENO_REG_RBBM_STATUS, REG_RBBM_STATUS),
@@ -2292,7 +2291,7 @@ static unsigned int a2xx_register_offsets[ADRENO_REG_REGISTER_MAX] = {
 	ADRENO_REG_DEFINE(ADRENO_REG_TP0_CHICKEN, REG_TP0_CHICKEN),
 };
 
-const struct adreno_reg_offsets a2xx_reg_offsets = {
+struct adreno_reg_offsets a2xx_reg_offsets = {
 	.offsets = a2xx_register_offsets,
 	.offset_0 = ADRENO_REG_REGISTER_MAX,
 };

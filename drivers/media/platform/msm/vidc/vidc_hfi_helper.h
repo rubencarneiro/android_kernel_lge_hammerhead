@@ -1,4 +1,3 @@
-
 /* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -65,7 +64,13 @@
 
 #define HFI_ERR_SESSION_STREAM_CORRUPT		(HFI_COMMON_BASE + 0x100B)
 #define HFI_ERR_SESSION_ENC_OVERFLOW		(HFI_COMMON_BASE + 0x100C)
-#define  HFI_ERR_SESSION_UNSUPPORTED_STREAM	(HFI_COMMON_BASE + 0x100D)
+#define HFI_ERR_SESSION_UNSUPPORTED_STREAM	(HFI_COMMON_BASE + 0x100D)
+#define HFI_ERR_SESSION_CMDSIZE			(HFI_COMMON_BASE + 0x100E)
+#define HFI_ERR_SESSION_UNSUPPORT_CMD		(HFI_COMMON_BASE + 0x100F)
+#define HFI_ERR_SESSION_UNSUPPORT_BUFFERTYPE	(HFI_COMMON_BASE + 0x1010)
+#define HFI_ERR_SESSION_BUFFERCOUNT_TOOSMALL	(HFI_COMMON_BASE + 0x1011)
+#define HFI_ERR_SESSION_INVALID_SCALE_FACTOR	(HFI_COMMON_BASE + 0x1012)
+#define HFI_ERR_SESSION_UPSCALE_NOT_SUPPORTED	(HFI_COMMON_BASE + 0x1013)
 
 #define HFI_EVENT_SYS_ERROR				(HFI_COMMON_BASE + 0x1)
 #define HFI_EVENT_SESSION_ERROR			(HFI_COMMON_BASE + 0x2)
@@ -80,7 +85,8 @@
 #define HFI_VIDEO_CODEC_VC1				0x00000100
 #define HFI_VIDEO_CODEC_SPARK				0x00000200
 #define HFI_VIDEO_CODEC_VP8				0x00001000
-#define HFI_VIDEO_CODEC_HEVC				0x00010000
+#define HFI_VIDEO_CODEC_HEVC				0x00002000
+#define HFI_VIDEO_CODEC_HEVC_HYBRID			0x00004000
 
 #define HFI_H264_PROFILE_BASELINE			0x00000001
 #define HFI_H264_PROFILE_MAIN				0x00000002
@@ -106,6 +112,7 @@
 #define HFI_H264_LEVEL_42					0x00002000
 #define HFI_H264_LEVEL_5					0x00004000
 #define HFI_H264_LEVEL_51					0x00008000
+#define HFI_H264_LEVEL_52                                       0x00010000
 
 #define HFI_H263_PROFILE_BASELINE			0x00000001
 
@@ -177,35 +184,11 @@
 #define HFI_DIVX_PROFILE_HT				0x00000008
 #define HFI_DIVX_PROFILE_HD				0x00000010
 
-#define  HFI_HEVC_PROFILE_MAIN			0x00000001
-#define  HFI_HEVC_PROFILE_MAIN10		0x00000002
-#define  HFI_HEVC_PROFILE_MAIN_STILL_PIC	0x00000004
-
-#define  HFI_HEVC_LEVEL_1	0x00000001
-#define  HFI_HEVC_LEVEL_2	0x00000002
-#define  HFI_HEVC_LEVEL_21	0x00000004
-#define  HFI_HEVC_LEVEL_3	0x00000008
-#define  HFI_HEVC_LEVEL_31	0x00000010
-#define  HFI_HEVC_LEVEL_4	0x00000020
-#define  HFI_HEVC_LEVEL_41	0x00000040
-#define  HFI_HEVC_LEVEL_5	0x00000080
-#define  HFI_HEVC_LEVEL_51	0x00000100
-#define  HFI_HEVC_LEVEL_52	0x00000200
-#define  HFI_HEVC_LEVEL_6	0x00000400
-#define  HFI_HEVC_LEVEL_61	0x00000800
-#define  HFI_HEVC_LEVEL_62	0x00001000
-
-#define HFI_HEVC_TIER_MAIN	0x1
-#define HFI_HEVC_TIER_HIGH0	0x2
-
 #define HFI_BUFFER_INPUT				(HFI_COMMON_BASE + 0x1)
 #define HFI_BUFFER_OUTPUT				(HFI_COMMON_BASE + 0x2)
 #define HFI_BUFFER_OUTPUT2				(HFI_COMMON_BASE + 0x3)
 #define HFI_BUFFER_INTERNAL_PERSIST		(HFI_COMMON_BASE + 0x4)
 #define HFI_BUFFER_INTERNAL_PERSIST_1		(HFI_COMMON_BASE + 0x5)
-
-#define HFI_VENC_PERFMODE_MAX_QUALITY	0x1
-#define HFI_VENC_PERFMODE_POWER_SAVE	0x2
 
 struct hfi_buffer_info {
 	u32 buffer_addr;
@@ -335,20 +318,10 @@ struct hfi_buffer_info {
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x01F)
 #define  HFI_PROPERTY_PARAM_VENC_MAX_NUM_B_FRAMES \
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x020)
-#define HFI_PROPERTY_PARAM_VENC_H264_VUI_BITSTREAM_RESTRC \
-	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x021)
-#define HFI_PROPERTY_PARAM_VENC_PRESERVE_TEXT_QUALITY \
-	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x023)
 #define HFI_PROPERTY_PARAM_VENC_HIER_P_MAX_NUM_ENH_LAYER	\
 	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x026)
-#define HFI_PROPERTY_PARAM_VENC_INITIAL_QP      \
-        (HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x028)
-#define HFI_PROPERTY_PARAM_VENC_VPX_ERROR_RESILIENCE_MODE	\
-	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x029)
-#define HFI_PROPERTY_PARAM_VENC_HIER_B_MAX_NUM_ENH_LAYER	\
-	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x02C)
-
-
+#define HFI_PROPERTY_PARAM_VENC_INITIAL_QP	\
+	(HFI_PROPERTY_PARAM_VENC_COMMON_START + 0x028)
 #define HFI_PROPERTY_CONFIG_VENC_COMMON_START				\
 	(HFI_DOMAIN_BASE_VENC + HFI_ARCH_COMMON_OFFSET + 0x6000)
 #define HFI_PROPERTY_CONFIG_VENC_TARGET_BITRATE				\
@@ -376,9 +349,6 @@ struct hfi_buffer_info {
 	(HFI_PROPERTY_CONFIG_VENC_COMMON_START + 0x00B)
 #define  HFI_PROPERTY_CONFIG_VENC_LTRPERIOD			\
 	(HFI_PROPERTY_CONFIG_VENC_COMMON_START + 0x00C)
-#define  HFI_PROPERTY_CONFIG_VENC_PERF_MODE			\
-	(HFI_PROPERTY_CONFIG_VENC_COMMON_START + 0x00E)
-
 #define HFI_PROPERTY_CONFIG_VPE_COMMON_START				\
 	(HFI_DOMAIN_BASE_VPE + HFI_ARCH_COMMON_OFFSET + 0x8000)
 #define HFI_PROPERTY_CONFIG_VPE_DEINTERLACE				\
@@ -401,7 +371,7 @@ struct hfi_bitrate {
 #define HFI_CAPABILITY_BITRATE				(HFI_COMMON_BASE + 0x8)
 #define  HFI_CAPABILITY_BFRAME				(HFI_COMMON_BASE + 0x9)
 #define  HFI_CAPABILITY_HIER_P_NUM_ENH_LAYERS   (HFI_COMMON_BASE + 0x10)
-#define  HFI_CAPABILITY_ENC_H264_LTR_COUNT      (HFI_COMMON_BASE + 0x11)
+#define  HFI_CAPABILITY_ENC_LTR_COUNT      (HFI_COMMON_BASE + 0x11)
 
 struct hfi_capability_supported {
 	u32 capability_type;
@@ -477,6 +447,11 @@ struct hfi_intra_refresh {
 
 struct hfi_idr_period {
 	u32 idr_period;
+};
+
+struct hfi_operations_type {
+	u32 rotation;
+	u32 flip;
 };
 
 struct hfi_max_num_b_frames {
@@ -562,10 +537,10 @@ struct hfi_quantization {
 };
 
 struct hfi_initial_quantization {
-        u32 qp_i;
-        u32 qp_p;
-        u32 qp_b;
-        u32 init_qp_enable;
+	u32 qp_i;
+	u32 qp_p;
+	u32 qp_b;
+	u32 init_qp_enable;
 };
 
 struct hfi_quantization_range {
@@ -578,20 +553,20 @@ struct hfi_quantization_range {
 #define HFI_LTR_MODE_MANUAL		0x1
 #define HFI_LTR_MODE_PERIODIC	0x2
 
-struct hfi_ltr_mode {
-	u32 ltr_mode;
-	u32 ltr_count;
-	u32 trust_mode;
+struct hfi_ltrmode {
+	u32 ltrmode;
+	u32 ltrcount;
+	u32 trustmode;
 };
 
-struct hfi_ltr_use {
-	u32 ref_ltr;
-	u32 use_constrnt;
+struct hfi_ltruse {
+	u32 refltr;
+	u32 useconstrnt;
 	u32 frames;
 };
 
-struct hfi_ltr_mark {
-	u32 mark_frame;
+struct hfi_ltrmark {
+	u32 markframe;
 };
 
 struct hfi_frame_size {
@@ -804,6 +779,11 @@ struct hfi_mvc_buffer_lauout_descp_type {
 #define HFI_TEST_SSR_SW_ERR_FATAL	0x1
 #define HFI_TEST_SSR_SW_DIV_BY_ZERO	0x2
 #define HFI_TEST_SSR_HW_WDOG_IRQ	0x3
+
+struct vidc_hal_cmd_pkt_hdr {
+	u32 size;
+	u32 packet_type;
+};
 
 struct vidc_hal_msg_pkt_hdr {
 	u32 size;

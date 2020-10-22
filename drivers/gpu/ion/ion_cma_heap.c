@@ -76,10 +76,10 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 
 	if (!ION_IS_CACHED(flags))
 		info->cpu_addr = dma_alloc_writecombine(dev, len,
-					&(info->handle), 0);
+					&(info->handle), GFP_KERNEL);
 	else
 		info->cpu_addr = dma_alloc_nonconsistent(dev, len,
-					&(info->handle), 0);
+					&(info->handle), GFP_KERNEL);
 
 	if (!info->cpu_addr) {
 		dev_err(dev, "Fail to allocate buffer\n");
@@ -99,7 +99,7 @@ static int ion_cma_allocate(struct ion_heap *heap, struct ion_buffer *buffer,
 
 	/* keep this for memory release */
 	buffer->priv_virt = info;
-	dev_dbg(dev, "Allocate buffer %p\n", buffer);
+	dev_dbg(dev, "Allocate buffer %pK\n", buffer);
 	return 0;
 
 err:
@@ -112,7 +112,7 @@ static void ion_cma_free(struct ion_buffer *buffer)
 	struct device *dev = buffer->heap->priv;
 	struct ion_cma_buffer_info *info = buffer->priv_virt;
 
-	dev_dbg(dev, "Release buffer %p\n", buffer);
+	dev_dbg(dev, "Release buffer %pK\n", buffer);
 	/* release memory */
 	dma_free_coherent(dev, buffer->size, info->cpu_addr, info->handle);
 	sg_free_table(info->table);
@@ -128,7 +128,7 @@ static int ion_cma_phys(struct ion_heap *heap, struct ion_buffer *buffer,
 	struct device *dev = heap->priv;
 	struct ion_cma_buffer_info *info = buffer->priv_virt;
 
-	dev_dbg(dev, "Return buffer %p physical address 0x%pa\n", buffer,
+	dev_dbg(dev, "Return buffer %pK physical address 0x%pa\n", buffer,
 		&info->handle);
 
 	*addr = info->handle;
@@ -180,19 +180,17 @@ static void ion_cma_unmap_kernel(struct ion_heap *heap,
 }
 
 static int ion_cma_print_debug(struct ion_heap *heap, struct seq_file *s,
-			const struct rb_root *mem_map)
+			const struct list_head *mem_map)
 {
 	if (mem_map) {
-		struct rb_node *n;
+		struct mem_map_data *data;
 
 		seq_printf(s, "\nMemory Map\n");
 		seq_printf(s, "%16.s %14.s %14.s %14.s\n",
 			   "client", "start address", "end address",
 			   "size (hex)");
 
-		for (n = rb_first(mem_map); n; n = rb_next(n)) {
-			struct mem_map_data *data =
-					rb_entry(n, struct mem_map_data, node);
+		list_for_each_entry(data, mem_map, node) {
 			const char *client_name = "(null)";
 
 

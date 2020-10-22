@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -36,6 +36,7 @@
 #define NUM_VOCPROC_BLOCKS		(6 * MAX_NETWORKS)
 #define ACDB_TOTAL_VOICE_ALLOCATION	(ACDB_BLOCK_SIZE * NUM_VOCPROC_BLOCKS)
 
+#define MAX_HW_DELAY_ENTRIES	25
 
 struct acdb_data {
 	uint32_t		usage_count;
@@ -94,6 +95,11 @@ struct acdb_data {
 
 	/* Speaker protection */
 	struct msm_spk_prot_cfg spk_prot_cfg;
+
+	/* Av sync delay info */
+	struct hw_delay hw_delay_rx;
+	struct hw_delay hw_delay_tx;
+	struct meta_info_t metainfo;
 };
 
 static struct acdb_data		acdb_data;
@@ -346,6 +352,120 @@ int store_lsm_cal(struct cal_block *cal_block)
 		cal_block->cal_offset + acdb_data.paddr;
 	acdb_data.lsm_cal.cal_kvaddr =
 		cal_block->cal_offset + acdb_data.kvaddr;
+done:
+	return result;
+}
+
+int get_hw_delay(int32_t path, struct hw_delay_entry *entry)
+{
+	int i, result = 0;
+	struct hw_delay *delay = NULL;
+	struct hw_delay_entry *info = NULL;
+	pr_debug("%s,\n", __func__);
+
+	if (entry == NULL) {
+		pr_err("ACDB=> NULL pointer sent to %s\n", __func__);
+		result = -EINVAL;
+		goto ret;
+	}
+	if ((path >= MAX_AUDPROC_TYPES) || (path < 0)) {
+		pr_err("ACDB=> Bad path sent to %s, path: %d\n",
+		       __func__, path);
+		result = -EINVAL;
+		goto ret;
+	}
+	mutex_lock(&acdb_data.acdb_mutex);
+	if (path == RX_CAL)
+		delay = &acdb_data.hw_delay_rx;
+	else if (path == TX_CAL)
+		delay = &acdb_data.hw_delay_tx;
+
+	if ((delay == NULL) || ((delay != NULL) && delay->num_entries == 0)) {
+		pr_debug("ACDB=> %s Invalid delay/ delay entries\n", __func__);
+		result = -EINVAL;
+		goto done;
+	}
+
+	info = (struct hw_delay_entry *)(delay->delay_info);
+	if (info == NULL) {
+		pr_err("ACDB=> %s Delay entries info is NULL\n", __func__);
+		result = -EFAULT;
+		goto done;
+	}
+	for (i = 0; i < delay->num_entries; i++) {
+		if (info[i].sample_rate == entry->sample_rate) {
+			entry->delay_usec = info[i].delay_usec;
+			break;
+		}
+	}
+	if (i == delay->num_entries) {
+		pr_err("ACDB=> %s: Unable to find delay for sample rate %d\n",
+		       __func__, entry->sample_rate);
+		result = -EFAULT;
+	}
+
+done:
+	mutex_unlock(&acdb_data.acdb_mutex);
+	pr_debug("ACDB=> %s: Path = %d samplerate = %u usec = %u status %d\n",
+		 __func__, path, entry->sample_rate, entry->delay_usec, result);
+ret:
+	return result;
+}
+
+int store_hw_delay(int32_t path, void *arg)
+{
+	int result = 0;
+	struct hw_delay delay;
+	struct hw_delay *delay_dest = NULL;
+	pr_debug("%s,\n", __func__);
+
+	if ((path >= MAX_AUDPROC_TYPES) || (path < 0) || (arg == NULL)) {
+		pr_err("ACDB=> Bad path/ pointer sent to %s, path: %d\n",
+		      __func__, path);
+		result = -EINVAL;
+		goto done;
+	}
+	result = copy_from_user((void *)&delay, (void *)arg,
+				sizeof(struct hw_delay));
+	if (result) {
+		pr_err("ACDB=> %s failed to copy hw delay: result=%d path=%d\n",
+		       __func__, result, path);
+		result = -EFAULT;
+		goto done;
+	}
+	if ((delay.num_entries <= 0) ||
+		(delay.num_entries > MAX_HW_DELAY_ENTRIES)) {
+		pr_debug("ACDB=> %s incorrect no of hw delay entries: %d\n",
+		       __func__, delay.num_entries);
+		result = -EINVAL;
+		goto done;
+	}
+	if ((path >= MAX_AUDPROC_TYPES) || (path < 0)) {
+		pr_err("ACDB=> Bad path sent to %s, path: %d\n",
+		__func__, path);
+		result = -EINVAL;
+		goto done;
+	}
+
+	pr_debug("ACDB=> %s : Path = %d num_entries = %d\n",
+		 __func__, path, delay.num_entries);
+
+	if (path == RX_CAL)
+		delay_dest = &acdb_data.hw_delay_rx;
+	else if (path == TX_CAL)
+		delay_dest = &acdb_data.hw_delay_tx;
+
+	delay_dest->num_entries = delay.num_entries;
+
+	result = copy_from_user(delay_dest->delay_info,
+				delay.delay_info,
+				(sizeof(struct hw_delay_entry)*
+				delay.num_entries));
+	if (result) {
+		pr_err("ACDB=> %s failed to copy hw delay info res=%d path=%d",
+		       __func__, result, path);
+		result = -EFAULT;
+	}
 done:
 	return result;
 }
@@ -848,6 +968,103 @@ done:
 	return result;
 }
 
+static int store_meta_info(void *arg)
+{
+	int result = 0;
+
+	result = copy_from_user((void *)&(acdb_data.metainfo.nKeyValue),
+				(void *)arg, sizeof(uint32_t));
+	if (result) {
+		pr_err("ACDB=> %s failed to copy metaInfo Key: result=%d\n",
+			__func__, result);
+		result = -EFAULT;
+		goto done;
+	}
+	result = copy_from_user((void *)&(acdb_data.metainfo.nBufferLength),
+		(void *)(arg + sizeof(uint32_t)), sizeof(uint32_t));
+	if (result) {
+		pr_err("ACDB=> %s failed to copy metaInfo size: result=%d\n",
+			__func__, result);
+		result = -EFAULT;
+		goto done;
+	}
+	if (acdb_data.metainfo.nBufferLength > MAX_META_INFO_SIZE) {
+		pr_err("ACDB=> %s metaInfo size too large (%d)\n",
+			__func__, acdb_data.metainfo.nBufferLength);
+		result = -EFAULT;
+		goto done;
+
+	}
+	if (acdb_data.metainfo.nBuffer != NULL) {
+		pr_err("ACDB=> %s metaInfo already there\n",
+			__func__);
+		result = -EEXIST;
+		goto done;
+	}
+	acdb_data.metainfo.nBuffer =
+			kmalloc(acdb_data.metainfo.nBufferLength, GFP_KERNEL);
+	if (acdb_data.metainfo.nBuffer == NULL) {
+		pr_err("%s : Failed to allocate metaInfo\n",
+			__func__);
+		result = -ENOMEM;
+		goto done;
+	}
+
+	result = copy_from_user((void *)(acdb_data.metainfo.nBuffer),
+		 (void *)(*(uint32_t **)(arg + sizeof(uint32_t)*2)),
+		 acdb_data.metainfo.nBufferLength);
+
+	if (result) {
+		pr_err("ACDB=> %s failed to copy metaInfo : result=%d\n",
+			__func__, result);
+		kfree(acdb_data.metainfo.nBuffer);
+		result = -EFAULT;
+		goto done;
+	}
+
+done:
+	return result;
+}
+
+int get_meta_info_size(uint32_t key, uint32_t *size)
+{
+	int result = 0;
+
+	mutex_lock(&acdb_data.acdb_mutex);
+	if (key == acdb_data.metainfo.nKeyValue)
+		*size = acdb_data.metainfo.nBufferLength;
+	else
+		result = -EINVAL;
+
+	mutex_unlock(&acdb_data.acdb_mutex);
+
+	return result;
+}
+
+int get_meta_info(struct meta_info_t *metainfo)
+{
+	int result = 0;
+
+	if (metainfo == NULL || metainfo->nBuffer == NULL) {
+		pr_err("ACDB=> NULL pointer sent to %s\n", __func__);
+		result = -EINVAL;
+		goto done;
+	}
+	mutex_lock(&acdb_data.acdb_mutex);
+	if (metainfo->nKeyValue == acdb_data.metainfo.nKeyValue &&
+	    metainfo->nBufferLength == acdb_data.metainfo.nBufferLength &&
+	    acdb_data.metainfo.nBuffer  != NULL)
+		memcpy(metainfo->nBuffer, acdb_data.metainfo.nBuffer,
+			acdb_data.metainfo.nBufferLength);
+	else {
+		pr_err("ACDB=> wrong data %s\n", __func__);
+		result = -EINVAL;
+	}
+	mutex_unlock(&acdb_data.acdb_mutex);
+done:
+	return result;
+}
+
 int get_spk_protection_cfg(struct msm_spk_prot_cfg *prot_cfg)
 {
 	int result = 0;
@@ -934,9 +1151,51 @@ static int acdb_open(struct inode *inode, struct file *f)
 
 	acdb_data.valid_adm_custom_top = 1;
 	acdb_data.valid_asm_custom_top = 1;
+	acdb_data.metainfo.nBuffer  = NULL;
 	acdb_data.usage_count++;
 	mutex_unlock(&acdb_data.acdb_mutex);
 
+	return result;
+}
+
+static void deallocate_hw_delay_entries(void)
+{
+	kfree(acdb_data.hw_delay_rx.delay_info);
+	kfree(acdb_data.hw_delay_tx.delay_info);
+
+	acdb_data.hw_delay_rx.delay_info = NULL;
+	acdb_data.hw_delay_tx.delay_info = NULL;
+}
+
+static int allocate_hw_delay_entries(void)
+{
+	int	result = 0;
+
+	/* Allocate memory for hw delay entries */
+	acdb_data.hw_delay_rx.num_entries = 0;
+	acdb_data.hw_delay_tx.num_entries = 0;
+	acdb_data.hw_delay_rx.delay_info =
+				kmalloc(sizeof(struct hw_delay_entry)*
+					MAX_HW_DELAY_ENTRIES,
+					GFP_KERNEL);
+	if (acdb_data.hw_delay_rx.delay_info == NULL) {
+		pr_err("%s : Failed to allocate av sync delay entries rx\n",
+			__func__);
+		result = -ENOMEM;
+		goto done;
+	}
+	acdb_data.hw_delay_tx.delay_info =
+				kmalloc(sizeof(struct hw_delay_entry)*
+					MAX_HW_DELAY_ENTRIES,
+					GFP_KERNEL);
+	if (acdb_data.hw_delay_tx.delay_info == NULL) {
+		pr_err("%s : Failed to allocate av sync delay entries tx\n",
+			__func__);
+		deallocate_hw_delay_entries();
+		result = -ENOMEM;
+		goto done;
+	}
+done:
 	return result;
 }
 
@@ -991,13 +1250,6 @@ static int unmap_cal_tables(void)
 		result = result2;
 	}
 
-	result2 = q6lsm_unmap_cal_blocks();
-	if (result2 < 0) {
-		pr_err("%s: lsm_unmap_cal_blocks failed, err = %d\n",
-			__func__, result2);
-		result = result2;
-	}
-
 	result2 = q6asm_unmap_cal_blocks();
 	if (result2 < 0) {
 		pr_err("%s: asm_unmap_cal_blocks failed, err = %d\n",
@@ -1005,7 +1257,7 @@ static int unmap_cal_tables(void)
 		result = result2;
 	}
 
-	result2 = voice_unmap_cal_blocks();
+	result2 = voc_unmap_cal_blocks();
 	if (result2 < 0) {
 		pr_err("%s: voice_unmap_cal_blocks failed, err = %d\n",
 			__func__, result2);
@@ -1037,6 +1289,7 @@ static int deregister_memory(void)
 	acdb_data.ion_handle = NULL;
 
 	deallocate_col_data();
+	deallocate_hw_delay_entries();
 done:
 	return result;
 }
@@ -1052,9 +1305,16 @@ static int register_memory(void)
 
 	result = allocate_col_data();
 	if (result) {
-		pr_err("%s: allocate_hw_delay_entries failed, rc = %d\n",
+		pr_err("%s: allocate_col_data failed, rc = %d\n",
 			__func__, result);
 		goto err_done;
+	}
+
+	result = allocate_hw_delay_entries();
+	if (result) {
+		pr_err("%s: allocate_hw_delay_entries failed, rc = %d\n",
+			__func__, result);
+		goto err_col;
 	}
 
 	result = msm_audio_ion_import("audio_acdb_client",
@@ -1066,7 +1326,7 @@ static int register_memory(void)
 	if (result) {
 		pr_err("%s: audio ION alloc failed, rc = %d\n",
 			__func__, result);
-		goto err_col;
+		goto err_hw_delay;
 	}
 
 	kvaddr = (unsigned long)kvptr;
@@ -1079,6 +1339,8 @@ static int register_memory(void)
 		 acdb_data.mem_len);
 
 	return result;
+err_hw_delay:
+	deallocate_hw_delay_entries();
 err_col:
 	deallocate_col_data();
 err_done:
@@ -1198,6 +1460,15 @@ static long acdb_ioctl(struct file *f,
 		goto done;
 	case AUDIO_DEREGISTER_VOCPROC_VOL_TABLE:
 		result = deregister_vocvol_table();
+		goto done;
+	case AUDIO_SET_HW_DELAY_RX:
+		result = store_hw_delay(RX_CAL, (void *)arg);
+		goto done;
+	case AUDIO_SET_HW_DELAY_TX:
+		result = store_hw_delay(TX_CAL, (void *)arg);
+		goto done;
+	case AUDIO_SET_META_INFO:
+		result = store_meta_info((void *)arg);
 		goto done;
 	}
 
@@ -1356,6 +1627,8 @@ static int acdb_release(struct inode *inode, struct file *f)
 		result = -EBUSY;
 		goto done;
 	}
+	if (acdb_data.metainfo.nBuffer != NULL)
+		kfree(acdb_data.metainfo.nBuffer);
 
 	result = deregister_memory();
 done:

@@ -138,6 +138,7 @@
 #define DWC3_GEVNTCOUNT(n)	(0xc40c + (n * 0x10))
 
 #define DWC3_GHWPARAMS8		0xc600
+#define DWC3_GFLADJ		0xc630
 
 /* Device Registers */
 #define DWC3_DCFG		0xc700
@@ -163,7 +164,10 @@
 
 /* Global Configuration Register */
 #define DWC3_GCTL_PWRDNSCALE(n)	((n) << 19)
+#define DWC3_GCTL_PWRDNSCALEMASK (0xFFF80000)
 #define DWC3_GCTL_U2RSTECN	(1 << 16)
+#define DWC3_GCTL_SOFITPSYNC	(1 << 10)
+#define DWC3_GCTL_U2EXIT_LFPS	(1 << 2)
 #define DWC3_GCTL_RAMCLKSEL(x)	(((x) & DWC3_GCTL_CLK_MASK) << 6)
 #define DWC3_GCTL_CLK_BUS	(0)
 #define DWC3_GCTL_CLK_PIPE	(1)
@@ -215,6 +219,12 @@
 
 /* Global HWPARAMS6 Register */
 #define DWC3_GHWPARAMS6_SRP_SUPPORT	(1 << 10)
+
+/* Global Frame Length Adjustment Register */
+#define DWC3_GFLADJ_REFCLK_240MHZDECR_PLS1	(1 << 31)
+#define DWC3_GFLADJ_REFCLK_240MHZ_DECR		(0x7F << 24)
+#define DWC3_GFLADJ_REFCLK_LPM_SEL		(1 << 23)
+#define DWC3_GFLADJ_REFCLK_FLADJ		(0x3FFF << 8)
 
 /* Device Configuration Register */
 #define DWC3_DCFG_LPM_CAP	(1 << 22)
@@ -628,6 +638,7 @@ struct dwc3_request {
 
 	u8			epnum;
 	struct dwc3_trb		*trb;
+	struct dwc3_trb		*ztrb;
 	dma_addr_t		trb_dma;
 
 	unsigned		direction:1;
@@ -643,6 +654,10 @@ struct dwc3_scratchpad_array {
 	__le64	dma_adr[DWC3_MAX_HIBER_SCRATCHBUFS];
 };
 
+#define DWC3_CONTROLLER_ERROR_EVENT			0
+#define DWC3_CONTROLLER_RESET_EVENT			1
+#define DWC3_CONTROLLER_POST_RESET_EVENT		2
+#define DWC3_CONTROLLER_POST_INITIALIZATION_EVENT	3
 /**
  * struct dwc3 - representation of our controller
  * @ctrl_req: usb control request which is used for ep0
@@ -687,6 +702,9 @@ struct dwc3_scratchpad_array {
  * @mem: points to start of memory which is used for this struct.
  * @hwparams: copy of hwparams registers
  * @root: debugfs root folder pointer
+ * @tx_fifo_size: Available RAM size for TX fifo allocation
+ * @err_evt_seen: previous event in queue was erratic error
+ * @irq_cnt: total irq count
  */
 struct dwc3 {
 	struct usb_ctrlrequest	*ctrl_req;
@@ -734,6 +752,7 @@ struct dwc3 {
 #define DWC3_REVISION_210A	0x5533210a
 #define DWC3_REVISION_220A	0x5533220a
 #define DWC3_REVISION_230A	0x5533230a
+#define DWC3_REVISION_250A	0x5533250a
 
 	unsigned		is_selfpowered:1;
 	unsigned		three_stage_setup:1;
@@ -771,8 +790,13 @@ struct dwc3 {
 
 	/* Indicate if software connect was issued by the usb_gadget_driver */
 	bool			softconnect;
+	void (*notify_event) (struct dwc3 *, unsigned);
+	int			tx_fifo_size;
+	bool			tx_fifo_reduced;
 
 	bool			no_set_vbus_power;
+	bool			err_evt_seen;
+	unsigned long		irq_cnt;
 };
 
 /* -------------------------------------------------------------------------- */
@@ -922,7 +946,11 @@ void dwc3_gadget_exit(struct dwc3 *dwc);
 
 void dwc3_gadget_restart(struct dwc3 *dwc);
 void dwc3_post_host_reset_core_init(struct dwc3 *dwc);
+int dwc3_event_buffers_setup(struct dwc3 *dwc);
 
+extern void dwc3_set_notifier(
+		void (*notify) (struct dwc3 *dwc3, unsigned event));
+extern int dwc3_notify_event(struct dwc3 *dwc3, unsigned event);
 extern int dwc3_get_device_id(void);
 extern void dwc3_put_device_id(int id);
 

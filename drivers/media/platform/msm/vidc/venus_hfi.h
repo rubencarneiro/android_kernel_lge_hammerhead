@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -124,6 +124,12 @@ enum bus_index {
 	BUS_IDX_MAX
 };
 
+enum clock_state {
+	DISABLED_UNPREPARED,
+	ENABLED_PREPARED,
+	DISABLED_PREPARED
+};
+
 struct vidc_mem_addr {
 	u8 *align_device_addr;
 	u8 *align_virtual_addr;
@@ -145,6 +151,7 @@ struct hal_data {
 };
 
 enum vidc_clocks {
+	VCODEC_NONE,
 	VCODEC_CLK,
 	VCODEC_AHB_CLK,
 	VCODEC_AXI_CLK,
@@ -177,17 +184,24 @@ struct venus_resources {
 	struct on_chip_mem ocmem;
 };
 
+enum venus_hfi_state {
+	VENUS_STATE_DEINIT = 1,
+	VENUS_STATE_INIT,
+};
+
 struct venus_hfi_device {
 	struct list_head list;
 	struct list_head sess_head;
 	u32 intr_status;
 	u32 device_id;
-	u32 load;
-	u32 clocks_enabled;
+	u32 clk_load;
+	u32 bus_load[MSM_VIDC_MAX_DEVICES];
+	enum clock_state clk_state;
+	bool power_enabled;
 	enum vidc_clocks clk_gating_level;
 	struct mutex read_lock;
 	struct mutex write_lock;
-	struct mutex clock_lock;
+	struct mutex clk_pwr_lock;
 	struct mutex session_lock;
 	msm_vidc_callback callback;
 	struct vidc_mem_addr iface_q_table;
@@ -198,14 +212,20 @@ struct venus_hfi_device {
 	struct smem_client *hal_client;
 	struct hal_data *hal_data;
 	struct workqueue_struct *vidc_workq;
+	struct workqueue_struct *venus_pm_workq;
 	int spur_count;
 	int reg_count;
+	int pc_num_cmds;
 	u32 base_addr;
 	u32 register_base;
 	u32 register_size;
 	u32 irq;
+	int clk_cnt;
+	int pwr_cnt;
 	struct venus_resources resources;
 	struct msm_vidc_platform_resources *res;
+	struct regulator *gdsc;
+	enum venus_hfi_state state;
 };
 
 void venus_hfi_delete_device(void *device);

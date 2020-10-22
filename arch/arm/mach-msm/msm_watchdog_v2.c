@@ -71,7 +71,7 @@ struct msm_watchdog_data {
 
 /*
  * On the kernel command line specify
- * msm_watchdog.enable=1 to enable the watchdog
+ * msm_watchdog_v2.enable=1 to enable the watchdog
  * By default watchdog is turned on
  */
 static int enable = 1;
@@ -79,7 +79,7 @@ module_param(enable, int, 0);
 
 /*
  * On the kernel command line specify
- * msm_watchdog.WDT_HZ=<clock val in HZ> to set Watchdog
+ * msm_watchdog_v2.WDT_HZ=<clock val in HZ> to set Watchdog
  * ticks. By default it is set to 32765.
  */
 static long WDT_HZ = 32765;
@@ -342,8 +342,8 @@ static irqreturn_t wdog_bark_handler(int irq, void *dev_id)
 	unsigned long long t = sched_clock();
 
 	nanosec_rem = do_div(t, 1000000000);
-	printk(KERN_INFO "Watchdog bark! Now = %lu.%06lu\n", (unsigned long) t,
-		nanosec_rem / 1000);
+	printk(KERN_INFO "Watchdog bark! Now = %lu.%06lu IRQ = %d\n",
+		(unsigned long) t, nanosec_rem / 1000, irq);
 
 	nanosec_rem = do_div(wdog_dd->last_pet, 1000000000);
 	printk(KERN_INFO "Watchdog last pet at %lu.%06lu\n", (unsigned long)
@@ -498,8 +498,9 @@ static int __devinit msm_wdog_dt_to_pdata(struct platform_device *pdev,
 	wdog_resource = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	pdata->size = resource_size(wdog_resource);
 	pdata->phys_base = wdog_resource->start;
-	if (unlikely(!(devm_request_region(&pdev->dev, pdata->phys_base,
-					pdata->size, "msm-watchdog")))) {
+	if (unlikely(!(devm_request_mem_region(&pdev->dev, pdata->phys_base,
+					       pdata->size, "msm-watchdog")))) {
+
 		dev_err(&pdev->dev, "%s cannot reserve watchdog region\n",
 								__func__);
 		return -ENXIO;

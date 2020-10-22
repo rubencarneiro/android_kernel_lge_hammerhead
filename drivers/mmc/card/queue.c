@@ -15,13 +15,17 @@
 #include <linux/freezer.h>
 #include <linux/kthread.h>
 #include <linux/scatterlist.h>
+#include <linux/bitops.h>
 
 #include <linux/mmc/card.h>
 #include <linux/mmc/host.h>
+#include <linux/sched.h>
 #include "queue.h"
 
 #define MMC_QUEUE_BOUNCESZ	65536
 
+
+#define MMC_REQ_SPECIAL_MASK	(REQ_DISCARD | REQ_FLUSH)
 
 /*
  * Based on benchmark tests the default num of requests to trigger the write
@@ -59,12 +63,20 @@ static int mmc_queue_thread(void *d)
 	struct request_queue *q = mq->queue;
 	struct mmc_card *card = mq->card;
 
+	struct sched_param scheduler_params = {0};
+	scheduler_params.sched_priority = 1;
+
+	sched_setscheduler(current, SCHED_FIFO, &scheduler_params);
+
 	current->flags |= PF_MEMALLOC;
+	if (card->host->wakeup_on_idle)
+		set_wake_up_idle(true);
 
 	down(&mq->thread_sem);
 	do {
 		struct mmc_queue_req *tmp;
 		struct request *req = NULL;
+		unsigned int cmd_flags = 0;
 
 		spin_lock_irq(q->queue_lock);
 		set_current_state(TASK_INTERRUPTIBLE);
@@ -74,12 +86,14 @@ static int mmc_queue_thread(void *d)
 
 		if (req || mq->mqrq_prev->req) {
 			set_current_state(TASK_RUNNING);
+			cmd_flags = req ? req->cmd_flags : 0;
 			mq->issue_fn(mq, req);
-			if (mq->flags & MMC_QUEUE_NEW_REQUEST) {
+			if (test_bit(MMC_QUEUE_NEW_REQUEST, &mq->flags)) {
 				continue; /* fetch again */
-			} else if ((mq->flags & MMC_QUEUE_URGENT_REQUEST) &&
-				   (mq->mqrq_cur->req &&
-				!(mq->mqrq_cur->req->cmd_flags & REQ_URGENT))) {
+			} else if (test_bit(MMC_QUEUE_URGENT_REQUEST,
+					&mq->flags) && (mq->mqrq_cur->req &&
+					!(cmd_flags &
+						MMC_REQ_NOREINSERT_MASK))) {
 				/*
 				 * clean current request when urgent request
 				 * processing in progress and current request is
@@ -93,7 +107,13 @@ static int mmc_queue_thread(void *d)
 			/*
 			 * Current request becomes previous request
 			 * and vice versa.
+			 * In case of special requests, current request
+			 * has been finished. Do not assign it to previous
+			 * request.
 			 */
+			if (cmd_flags & MMC_REQ_SPECIAL_MASK)
+				mq->mqrq_cur->req = NULL;
+
 			mq->mqrq_prev->brq.mrq.data = NULL;
 			mq->mqrq_prev->req = NULL;
 			tmp = mq->mqrq_prev;
@@ -264,7 +284,7 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 
 	if ((host->caps2 & MMC_CAP2_STOP_REQUEST) &&
 			host->ops->stop_request &&
-			mq->card->ext_csd.hpi)
+			mq->card->ext_csd.hpi_en)
 		blk_urgent_request(mq->queue, mmc_urgent_request);
 
 	memset(&mq->mqrq_cur, 0, sizeof(mq->mqrq_cur));
@@ -285,7 +305,9 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 	if (mmc_can_erase(card))
 		mmc_queue_setup_discard(mq->queue, card);
 
-	if ((mmc_can_sanitize(card) && (host->caps2 & MMC_CAP2_SANITIZE)))
+	/* Don't enable Sanitize if HPI is not supported */
+	if ((mmc_can_sanitize(card) && (host->caps2 & MMC_CAP2_SANITIZE) &&
+	    card->ext_csd.hpi_en))
 		mmc_queue_setup_sanitize(mq->queue);
 
 #ifdef CONFIG_MMC_BLOCK_BOUNCE
@@ -346,22 +368,43 @@ int mmc_init_queue(struct mmc_queue *mq, struct mmc_card *card,
 #endif
 
 	if (!mqrq_cur->bounce_buf && !mqrq_prev->bounce_buf) {
+		unsigned int max_segs = host->max_segs;
+
 		blk_queue_bounce_limit(mq->queue, limit);
 		blk_queue_max_hw_sectors(mq->queue,
 			min(host->max_blk_count, host->max_req_size / 512));
-		blk_queue_max_segments(mq->queue, host->max_segs);
 		blk_queue_max_segment_size(mq->queue, host->max_seg_size);
+retry:
+		blk_queue_max_segments(mq->queue, host->max_segs);
 
 		mqrq_cur->sg = mmc_alloc_sg(host->max_segs, &ret);
-		if (ret)
+		if (ret == -ENOMEM)
+			goto cur_sg_alloc_failed;
+		else if (ret)
 			goto cleanup_queue;
-
 
 		mqrq_prev->sg = mmc_alloc_sg(host->max_segs, &ret);
-		if (ret)
+		if (ret == -ENOMEM)
+			goto prev_sg_alloc_failed;
+		else if (ret)
 			goto cleanup_queue;
+
+		goto success;
+
+prev_sg_alloc_failed:
+		kfree(mqrq_cur->sg);
+		mqrq_cur->sg = NULL;
+cur_sg_alloc_failed:
+		host->max_segs /= 2;
+		if (host->max_segs) {
+			goto retry;
+		} else {
+			host->max_segs = max_segs;
+			goto cleanup_queue;
+		}
 	}
 
+success:
 	sema_init(&mq->thread_sem, 1);
 
 	mq->thread = kthread_run(mmc_queue_thread, mq, "mmcqd/%d%s",
@@ -450,9 +493,7 @@ int mmc_queue_suspend(struct mmc_queue *mq, int wait)
 	unsigned long flags;
 	int rc = 0;
 
-	if (!(mq->flags & MMC_QUEUE_SUSPENDED)) {
-		mq->flags |= MMC_QUEUE_SUSPENDED;
-
+	if (!(test_and_set_bit(MMC_QUEUE_SUSPENDED, &mq->flags))) {
 		spin_lock_irqsave(q->queue_lock, flags);
 		blk_stop_queue(q);
 		spin_unlock_irqrestore(q->queue_lock, flags);
@@ -463,7 +504,7 @@ int mmc_queue_suspend(struct mmc_queue *mq, int wait)
 			 * Failed to take the lock so better to abort the
 			 * suspend because mmcqd thread is processing requests.
 			 */
-			mq->flags &= ~MMC_QUEUE_SUSPENDED;
+			clear_bit(MMC_QUEUE_SUSPENDED, &mq->flags);
 			spin_lock_irqsave(q->queue_lock, flags);
 			blk_start_queue(q);
 			spin_unlock_irqrestore(q->queue_lock, flags);
@@ -485,8 +526,7 @@ void mmc_queue_resume(struct mmc_queue *mq)
 	struct request_queue *q = mq->queue;
 	unsigned long flags;
 
-	if (mq->flags & MMC_QUEUE_SUSPENDED) {
-		mq->flags &= ~MMC_QUEUE_SUSPENDED;
+	if (test_and_clear_bit(MMC_QUEUE_SUSPENDED, &mq->flags)) {
 
 		up(&mq->thread_sem);
 

@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2013, 2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -57,6 +57,7 @@ enum {
 
 struct msm_dai_q6_dai_data {
 	DECLARE_BITMAP(status_mask, STATUS_MAX);
+	DECLARE_BITMAP(hwfree_status, STATUS_MAX);
 	u32 rate;
 	u32 channels;
 	u32 bitwidth;
@@ -71,8 +72,6 @@ struct msm_dai_q6_mi2s_dai_config {
 struct msm_dai_q6_mi2s_dai_data {
 	struct msm_dai_q6_mi2s_dai_config tx_dai;
 	struct msm_dai_q6_mi2s_dai_config rx_dai;
-	struct snd_pcm_hw_constraint_list rate_constraint;
-	struct snd_pcm_hw_constraint_list bitwidth_constraint;
 };
 
 struct msm_dai_q6_auxpcm_dai_data {
@@ -1085,7 +1084,7 @@ static int __devinit msm_auxpcm_dev_probe(struct platform_device *pdev)
 		goto fail_pdata_nomem;
 	}
 
-	dev_dbg(&pdev->dev, "%s: dev %p, dai_data %p, auxpcm_pdata %p\n",
+	dev_dbg(&pdev->dev, "%s: dev %pK, dai_data %pK, auxpcm_pdata %pK\n",
 		__func__, &pdev->dev, dai_data, auxpcm_pdata);
 
 	rc = of_property_read_u32_array(pdev->dev.of_node,
@@ -1418,20 +1417,6 @@ static int msm_dai_q6_dai_mi2s_remove(struct snd_soc_dai *dai)
 static int msm_dai_q6_mi2s_startup(struct snd_pcm_substream *substream,
 				   struct snd_soc_dai *dai)
 {
-	struct msm_dai_q6_mi2s_dai_data *mi2s_dai_data =
-		dev_get_drvdata(dai->dev);
-
-	dev_dbg(dai->dev, "%s: cnst list %p\n", __func__,
-		mi2s_dai_data->rate_constraint.list);
-
-	if (mi2s_dai_data->rate_constraint.list) {
-		snd_pcm_hw_constraint_list(substream->runtime, 0,
-				SNDRV_PCM_HW_PARAM_RATE,
-				&mi2s_dai_data->rate_constraint);
-		snd_pcm_hw_constraint_list(substream->runtime, 0,
-				SNDRV_PCM_HW_PARAM_SAMPLE_BITS,
-				&mi2s_dai_data->bitwidth_constraint);
-	}
 
 	return 0;
 }
@@ -1526,6 +1511,11 @@ static int msm_dai_q6_mi2s_prepare(struct snd_pcm_substream *substream,
 			set_bit(STATUS_PORT_STARTED,
 				dai_data->status_mask);
 	}
+	if (!test_bit(STATUS_PORT_STARTED, dai_data->hwfree_status)) {
+		set_bit(STATUS_PORT_STARTED, dai_data->hwfree_status);
+		dev_dbg(dai->dev, "%s: set hwfree_status to started\n",
+				__func__);
+	}
 	return rc;
 }
 
@@ -1540,7 +1530,6 @@ static int msm_dai_q6_mi2s_hw_params(struct snd_pcm_substream *substream,
 		&mi2s_dai_data->rx_dai : &mi2s_dai_data->tx_dai);
 	struct msm_dai_q6_dai_data *dai_data = &mi2s_dai_config->mi2s_dai_data;
 	struct afe_param_id_i2s_cfg *i2s = &dai_data->port_config.i2s;
-
 
 	dai_data->channels = params_channels(params);
 	switch (dai_data->channels) {
@@ -1600,16 +1589,47 @@ static int msm_dai_q6_mi2s_hw_params(struct snd_pcm_substream *substream,
 		goto error_invalid_data;
 	}
 	dai_data->rate = params_rate(params);
-	dai_data->port_config.i2s.bit_width = 16;
-	dai_data->bitwidth = 16;
+
+	switch (params_format(params)) {
+	case SNDRV_PCM_FORMAT_S16_LE:
+	case SNDRV_PCM_FORMAT_SPECIAL:
+		dai_data->port_config.i2s.bit_width = 16;
+		dai_data->bitwidth = 16;
+		break;
+	case SNDRV_PCM_FORMAT_S24_LE:
+		dai_data->port_config.i2s.bit_width = 24;
+		dai_data->bitwidth = 24;
+		break;
+	default:
+		return -EINVAL;
+	}
+
 	dai_data->port_config.i2s.i2s_cfg_minor_version =
 			AFE_API_VERSION_I2S_CONFIG;
 	dai_data->port_config.i2s.sample_rate = dai_data->rate;
-	if (!mi2s_dai_data->rate_constraint.list) {
-		mi2s_dai_data->rate_constraint.list = &dai_data->rate;
-		mi2s_dai_data->bitwidth_constraint.list = &dai_data->bitwidth;
+	if ((test_bit(STATUS_PORT_STARTED,
+	    mi2s_dai_data->rx_dai.mi2s_dai_data.status_mask) &&
+	    test_bit(STATUS_PORT_STARTED,
+	    mi2s_dai_data->rx_dai.mi2s_dai_data.hwfree_status)) ||
+	    (test_bit(STATUS_PORT_STARTED,
+	    mi2s_dai_data->tx_dai.mi2s_dai_data.status_mask) &&
+	    test_bit(STATUS_PORT_STARTED,
+	    mi2s_dai_data->tx_dai.mi2s_dai_data.hwfree_status))) {
+		if ((mi2s_dai_data->tx_dai.mi2s_dai_data.rate !=
+		    mi2s_dai_data->rx_dai.mi2s_dai_data.rate) ||
+		   (mi2s_dai_data->rx_dai.mi2s_dai_data.bitwidth !=
+		    mi2s_dai_data->tx_dai.mi2s_dai_data.bitwidth)) {
+			dev_err(dai->dev, "%s: Error mismatch in HW params\n"
+				"Tx sample_rate = %u bit_width = %hu\n"
+				"Rx sample_rate = %u bit_width = %hu\n"
+				, __func__,
+				mi2s_dai_data->tx_dai.mi2s_dai_data.rate,
+				mi2s_dai_data->tx_dai.mi2s_dai_data.bitwidth,
+				mi2s_dai_data->rx_dai.mi2s_dai_data.rate,
+				mi2s_dai_data->rx_dai.mi2s_dai_data.bitwidth);
+			return -EINVAL;
+		}
 	}
-
 	dev_dbg(dai->dev, "%s: dai id %d dai_data->channels = %d\n"
 		"sample_rate = %u i2s_cfg_minor_version = %#x\n"
 		"bit_width = %hu  channel_mode = %#x mono_stereo = %#x\n"
@@ -1658,6 +1678,23 @@ static int msm_dai_q6_mi2s_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	return 0;
 }
 
+static int msm_dai_q6_mi2s_hw_free(struct snd_pcm_substream *substream,
+		struct snd_soc_dai *dai)
+{
+	struct msm_dai_q6_mi2s_dai_data *mi2s_dai_data =
+			dev_get_drvdata(dai->dev);
+	struct msm_dai_q6_dai_data *dai_data =
+		(substream->stream == SNDRV_PCM_STREAM_PLAYBACK ?
+		 &mi2s_dai_data->rx_dai.mi2s_dai_data :
+		 &mi2s_dai_data->tx_dai.mi2s_dai_data);
+
+	if (test_bit(STATUS_PORT_STARTED, dai_data->hwfree_status)) {
+		clear_bit(STATUS_PORT_STARTED, dai_data->hwfree_status);
+		dev_dbg(dai->dev, "%s: clear hwfree_status\n", __func__);
+	}
+	return 0;
+}
+
 static void msm_dai_q6_mi2s_shutdown(struct snd_pcm_substream *substream,
 				     struct snd_soc_dai *dai)
 {
@@ -1685,20 +1722,15 @@ static void msm_dai_q6_mi2s_shutdown(struct snd_pcm_substream *substream,
 			dev_err(dai->dev, "fail to close AFE port\n");
 		clear_bit(STATUS_PORT_STARTED, dai_data->status_mask);
 	}
-
-	if (!test_bit(STATUS_PORT_STARTED,
-			mi2s_dai_data->rx_dai.mi2s_dai_data.status_mask) &&
-		!test_bit(STATUS_PORT_STARTED,
-			mi2s_dai_data->rx_dai.mi2s_dai_data.status_mask)) {
-		mi2s_dai_data->rate_constraint.list = NULL;
-		mi2s_dai_data->bitwidth_constraint.list = NULL;
-	}
+	if (test_bit(STATUS_PORT_STARTED, dai_data->hwfree_status))
+		clear_bit(STATUS_PORT_STARTED, dai_data->hwfree_status);
 }
 
 static struct snd_soc_dai_ops msm_dai_q6_mi2s_ops = {
 	.startup	= msm_dai_q6_mi2s_startup,
 	.prepare	= msm_dai_q6_mi2s_prepare,
 	.hw_params	= msm_dai_q6_mi2s_hw_params,
+	.hw_free	= msm_dai_q6_mi2s_hw_free,
 	.set_fmt	= msm_dai_q6_mi2s_set_fmt,
 	.shutdown	= msm_dai_q6_mi2s_shutdown,
 };
@@ -1715,7 +1747,7 @@ static struct snd_soc_dai_driver msm_dai_q6_mi2s_dai = {
 	.capture = {
 		.rates = SNDRV_PCM_RATE_48000 | SNDRV_PCM_RATE_8000 |
 		SNDRV_PCM_RATE_16000,
-		.formats = SNDRV_PCM_FMTBIT_S16_LE,
+		.formats = SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_LE,
 		.rate_min =     8000,
 		.rate_max =     48000,
 	},
@@ -1948,8 +1980,6 @@ static __devinit int msm_dai_q6_mi2s_dev_probe(struct platform_device *pdev)
 	if (IS_ERR_VALUE(rc))
 		goto free_dai;
 
-	dai_data->rate_constraint.count = 1;
-	dai_data->bitwidth_constraint.count = 1;
 	rc = snd_soc_register_dai(&pdev->dev, mi2s_dai);
 	if (IS_ERR_VALUE(rc))
 		goto err_register;

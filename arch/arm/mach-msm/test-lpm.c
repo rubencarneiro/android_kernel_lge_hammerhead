@@ -22,7 +22,6 @@
 #include <linux/ctype.h>
 #include <linux/moduleparam.h>
 #include <linux/platform_device.h>
-#include <mach/socinfo.h>
 #if defined(CONFIG_MSM_RPM)
 #include "rpm_resources.h"
 #endif
@@ -121,9 +120,6 @@ static void lpm_populate_name(struct lpm_level_stat *stat,
 	case MSM_PM_SLEEP_MODE_WAIT_FOR_INTERRUPT:
 		strlcat(nm, "WFI ", BUF_SIZE);
 		break;
-	case MSM_PM_SLEEP_MODE_RAMP_DOWN_AND_WAIT_FOR_INTERRUPT:
-		strlcat(nm, "WFI voltage Rampdown ", BUF_SIZE);
-		break;
 	case MSM_PM_SLEEP_MODE_RETENTION:
 		strlcat(nm, "Retention ", BUF_SIZE);
 		break;
@@ -132,9 +128,6 @@ static void lpm_populate_name(struct lpm_level_stat *stat,
 		break;
 	case MSM_PM_SLEEP_MODE_POWER_COLLAPSE:
 		strlcat(nm, "Idle Power collapse ", BUF_SIZE);
-		break;
-	case MSM_PM_SLEEP_MODE_POWER_COLLAPSE_SUSPEND:
-		strlcat(nm, "Suspend Power collapse ", BUF_SIZE);
 		break;
 	default:
 		strlcat(nm, "Invalid Mode ", BUF_SIZE);

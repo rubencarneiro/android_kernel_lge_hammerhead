@@ -10,7 +10,6 @@
  * GNU General Public License for more details.
  */
 
-/include/ "msm8974-hammerhead-panel.dtsi"
 /include/ "msm8974-hammerhead-input.dtsi"
 /include/ "msm8974-hammerhead-hdmi.dtsi"
 /include/ "msm8974-hammerhead-usb.dtsi"
@@ -34,16 +33,6 @@
 &soc {
 	serial@f991d000 {
 		status = "ok";
-	};
-
-	qcom,mdss_mdp@fd900000 {
-		qcom,mdss_fb_primary {
-			qcom,memory-reservation-size = <0x1000000>;
-		};
-	};
-
-	qcom,mdss_dsi@fd922800 {
-		qcom,mdss-dsi-use-vdd-supply = <0>;
 	};
 
 	qcom,hdmi_tx@fd922100 {
@@ -87,7 +76,6 @@
 	sound {
 		compatible = "qcom,msm8974-audio-taiko";
 		qcom,model = "msm8974-taiko-mtp-snd-card";
-		qcom,mbhc-gpio-level-insert = <0>;
 
 		qcom,mbhc-disabled = <1>;
 
@@ -129,6 +117,7 @@
 		max1462x,gpio_detect = <&msmgpio 65 0x00>;
 		max1462x,gpio_mic_en = <&pm8941_gpios 29 0x00>;
 		max1462x,gpio_key = <&msmgpio 64 0x00>;
+		qcom,max1462x-vadc = <&pm8941_vadc>;
 	};
 
 	i2c@f9967000 {
@@ -137,14 +126,10 @@
 		};
 	};
 
-	qcom,msm-thermal {
-		qcom,limit-temp = <90>;
-	};
-
 	bluesleep {
-		compatible = "qcom,bluesleep";
-		bt_host_wake = <&msmgpio 42 0>;
-		bt_ext_wake = <&msmgpio 62 0>;
+		compatible = "lge,bcm_bluesleep";
+		host-wake-gpio = <&msmgpio 42 0>;
+		ext-wake-gpio = <&msmgpio 62 0>;
 		interrupt-parent = <&msmgpio>;
 		interrupts = <42 0>;
 		interrupt-names = "host_wake";
@@ -371,6 +356,7 @@
 	qcom,pad-drv-off = <0x0 0x0 0x0>; /* 2mA, 2mA, 2mA */
 
 	qcom,nonremovable;
+	qcom,wakeup-on-idle;
 	status = "ok";
 };
 

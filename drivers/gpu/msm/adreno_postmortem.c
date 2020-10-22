@@ -1,4 +1,4 @@
-/* Copyright (c) 2010-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2010-2014, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -80,6 +80,8 @@ static const struct pm_id_name pm3_nop_values[] = {
 	{KGSL_CMD_INTERNAL_IDENTIFIER,		"CMD__INT"},
 	{KGSL_START_OF_IB_IDENTIFIER,		"IB_START"},
 	{KGSL_END_OF_IB_IDENTIFIER,		"IB___END"},
+	{KGSL_START_OF_PROFILE_IDENTIFIER,	"PRO_STRT"},
+	{KGSL_END_OF_PROFILE_IDENTIFIER,	"PRO__END"},
 };
 
 static uint32_t adreno_is_pm4_len(uint32_t word)

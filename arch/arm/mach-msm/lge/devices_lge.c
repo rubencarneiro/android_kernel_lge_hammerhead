@@ -19,8 +19,6 @@
 #include <linux/persistent_ram.h>
 #include <linux/io.h>
 #include <linux/slab.h>
-#include <linux/module.h>
-
 #include <asm/setup.h>
 #include <asm/system_info.h>
 #include <mach/board_lge.h>
@@ -189,7 +187,6 @@ enum lge_boot_mode_type lge_get_boot_mode(void)
 {
 	return lge_boot_mode;
 }
-EXPORT_SYMBOL(lge_get_boot_mode);
 
 /* for board revision */
 static hw_rev_type lge_bd_rev = HW_REV_B;
@@ -199,7 +196,7 @@ char *rev_str[] = {"evb1", "evb2", "rev_a", "rev_b", "rev_c", "rev_d",
 	"rev_e", "rev_f", "rev_g", "rev_h", "rev_10", "rev_11", "rev_12",
 	"revserved"};
 
-static int __init board_revno_setup(char *rev_info)
+int __init board_revno_setup(char *rev_info)
 {
 	int i;
 

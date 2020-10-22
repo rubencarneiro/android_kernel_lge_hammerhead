@@ -111,7 +111,7 @@ static int gdsc_disable(struct regulator_dev *rdev)
 	uint32_t regval;
 	int i, ret = 0;
 
-	for (i = 0; i < sc->clock_count; i++) {
+	for (i = sc->clock_count-1; i >= 0; i--) {
 		if (sc->toggle_mem)
 			clk_set_flags(sc->clocks[i], CLKFLAG_NORETAIN_MEM);
 		if (sc->toggle_periph)
@@ -130,7 +130,7 @@ static int gdsc_disable(struct regulator_dev *rdev)
 			dev_err(&rdev->dev, "%s disable timed out\n",
 				sc->rdesc.name);
 	} else {
-		for (i = 0; i < sc->clock_count; i++)
+		for (i = sc->clock_count-1; i >= 0; i--)
 			clk_reset(sc->clocks[i], CLK_RESET_ASSERT);
 		sc->resets_asserted = true;
 	}
@@ -146,7 +146,7 @@ static struct regulator_ops gdsc_ops = {
 
 static int __devinit gdsc_probe(struct platform_device *pdev)
 {
-	static atomic_t gdsc_count = ATOMIC_INIT(-1);
+	static atomic_t gdsc_count __initdata = ATOMIC_INIT(-1);
 	struct regulator_init_data *init_data;
 	struct resource *res;
 	struct gdsc *sc;
@@ -274,7 +274,7 @@ static int __devexit gdsc_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id gdsc_match_table[] = {
+static struct of_device_id gdsc_match_table[] __initdata = {
 	{ .compatible = "qcom,gdsc" },
 	{}
 };

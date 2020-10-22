@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2013, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2016, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,6 +35,10 @@
 
 struct msm_vidc_drv *vidc_driver;
 
+uint32_t msm_vidc_pwr_collapse_delay = 10000;
+
+uint32_t pm_qos_latency_us = 501;
+
 static inline struct msm_vidc_inst *get_vidc_inst(struct file *filp, void *fh)
 {
 	return container_of(filp->private_data,
@@ -56,6 +60,29 @@ static int msm_v4l2_open(struct file *filp)
 		core->id, vid_dev->type);
 		return -ENOMEM;
 	}
+
+	if (!pm_qos_request_active(&vidc_inst->pm_qos)) {
+		dprintk(VIDC_DBG, "pm_qos_add with latency %u usec\n",
+				pm_qos_latency_us);
+
+		/*
+		 * The default request type PM_QOS_REQ_ALL_CORES is
+		 * applicable to all CPU cores that are online and
+		 * would have a power impact when there are more
+		 * number of CPUs. PM_QOS_REQ_AFFINE_IRQ request
+		 * type shall update/apply the vote only to that CPU to
+		 * which IRQ's affinity is set to.
+		 */
+#ifdef CONFIG_SMP
+
+		vidc_inst->pm_qos.type = PM_QOS_REQ_AFFINE_IRQ;
+		vidc_inst->pm_qos.irq = core->resources.irq;
+
+#endif
+		pm_qos_add_request(&vidc_inst->pm_qos,
+				PM_QOS_CPU_DMA_LATENCY, pm_qos_latency_us);
+	}
+
 	clear_bit(V4L2_FL_USES_V4L2_FH, &vdev->flags);
 	filp->private_data = &(vidc_inst->event_handler);
 	return 0;
@@ -72,7 +99,15 @@ static int msm_v4l2_close(struct file *filp)
 		dprintk(VIDC_WARN,
 			"Failed in %s for release output buffers\n", __func__);
 
+	if (pm_qos_request_active(&vidc_inst->pm_qos)) {
+		dprintk(VIDC_DBG, "pm_qos_update and remove\n");
+		pm_qos_update_request(&vidc_inst->pm_qos,
+				PM_QOS_DEFAULT_VALUE);
+		pm_qos_remove_request(&vidc_inst->pm_qos);
+	}
+
 	rc = msm_vidc_close(vidc_inst);
+
 	return rc;
 }
 
@@ -283,7 +318,7 @@ static int read_platform_resources(struct msm_vidc_core *core,
 		struct platform_device *pdev)
 {
 	if (!core || !pdev) {
-		dprintk(VIDC_ERR, "%s: Invalid params %p %p\n",
+		dprintk(VIDC_ERR, "%s: Invalid params %pK %pK\n",
 			__func__, core, pdev);
 		return -EINVAL;
 	}
@@ -317,7 +352,6 @@ static int msm_vidc_initialize_core(struct platform_device *pdev,
 	}
 
 	INIT_LIST_HEAD(&core->instances);
-	mutex_init(&core->sync_lock);
 	mutex_init(&core->lock);
 
 	core->state = VIDC_CORE_UNINIT;
@@ -326,6 +360,7 @@ static int msm_vidc_initialize_core(struct platform_device *pdev,
 		init_completion(&core->completions[i]);
 	}
 
+	INIT_DELAYED_WORK(&core->fw_unload_work, msm_vidc_fw_unload_handler);
 	return rc;
 }
 
@@ -353,6 +388,31 @@ static ssize_t msm_vidc_link_name_show(struct device *dev,
 
 static DEVICE_ATTR(link_name, 0644, msm_vidc_link_name_show, NULL);
 
+static ssize_t store_pwr_collapse_delay(struct device *dev,
+		struct device_attribute *attr,
+		const char *buf, size_t count)
+{
+	unsigned long val = 0;
+	int rc = 0;
+	rc = kstrtoul(buf, 0, &val);
+	if (rc)
+		return rc;
+	else if (val == 0)
+		return -EINVAL;
+	msm_vidc_pwr_collapse_delay = val;
+	return count;
+}
+
+static ssize_t show_pwr_collapse_delay(struct device *dev,
+		struct device_attribute *attr,
+		char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, "%u\n", msm_vidc_pwr_collapse_delay);
+}
+
+static DEVICE_ATTR(pwr_collapse_delay, 0644, show_pwr_collapse_delay,
+		store_pwr_collapse_delay);
+
 static int __devinit msm_vidc_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -370,12 +430,22 @@ static int __devinit msm_vidc_probe(struct platform_device *pdev)
 	rc = msm_vidc_initialize_core(pdev, core);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to init core\n");
-		goto err_v4l2_register;
+		goto err_core_init;
+	}
+	rc = device_create_file(&pdev->dev, &dev_attr_pwr_collapse_delay);
+	if (rc) {
+		dprintk(VIDC_ERR,
+				"Failed to create pwr_collapse_delay sysfs node");
+		goto err_core_init;
 	}
 	if (core->hfi_type == VIDC_HFI_Q6) {
-		dprintk(VIDC_DBG, "Q6 hfi device probe called\n");
+		dprintk(VIDC_ERR, "Q6 hfi device probe called\n");
 		nr += MSM_VIDC_MAX_DEVICES;
+		core->id = MSM_VIDC_CORE_Q6;
+	} else {
+		core->id = MSM_VIDC_CORE_VENUS;
 	}
+
 	rc = v4l2_device_register(&pdev->dev, &core->v4l2_dev);
 	if (rc) {
 		dprintk(VIDC_ERR, "Failed to register v4l2 device\n");
@@ -428,16 +498,20 @@ static int __devinit msm_vidc_probe(struct platform_device *pdev)
 				vidc_driver->num_cores);
 		goto err_cores_exceeded;
 	}
-	core->id = vidc_driver->num_cores++;
+	vidc_driver->num_cores++;
 	mutex_unlock(&vidc_driver->lock);
 
 	core->device = vidc_hfi_initialize(core->hfi_type, core->id,
 				&core->resources, &handle_cmd_response);
-	if (!core->device) {
-		dprintk(VIDC_ERR, "Failed to create HFI device\n");
+	if (IS_ERR_OR_NULL(core->device)) {
 		mutex_lock(&vidc_driver->lock);
 		vidc_driver->num_cores--;
 		mutex_unlock(&vidc_driver->lock);
+		rc = PTR_ERR(core->device);
+		if (rc != -EPROBE_DEFER)
+			dprintk(VIDC_ERR, "Failed to create HFI device\n");
+		else
+			dprintk(VIDC_DBG, "msm_vidc: request probe defer\n");
 		goto err_cores_exceeded;
 	}
 
@@ -462,6 +536,8 @@ err_dec_attr_link_name:
 err_dec_register:
 	v4l2_device_unregister(&core->v4l2_dev);
 err_v4l2_register:
+	device_remove_file(&pdev->dev, &dev_attr_pwr_collapse_delay);
+err_core_init:
 	kfree(core);
 err_no_mem:
 	return rc;
@@ -473,7 +549,7 @@ static int __devexit msm_vidc_remove(struct platform_device *pdev)
 	struct msm_vidc_core *core;
 
 	if (!pdev) {
-		dprintk(VIDC_ERR, "%s invalid input %p", __func__, pdev);
+		dprintk(VIDC_ERR, "%s invalid input %pK", __func__, pdev);
 		return -EINVAL;
 	}
 	core = pdev->dev.platform_data;
@@ -498,6 +574,36 @@ static int __devexit msm_vidc_remove(struct platform_device *pdev)
 }
 static const struct of_device_id msm_vidc_dt_match[] = {
 	{.compatible = "qcom,msm-vidc"},
+	{}
+};
+
+static int msm_vidc_pm_suspend(struct device *pdev)
+{
+	struct msm_vidc_core *core;
+
+	if (!pdev) {
+		dprintk(VIDC_ERR, "%s invalid device\n", __func__);
+		return -EINVAL;
+	}
+
+	core = (struct msm_vidc_core *)pdev->platform_data;
+	if (!core) {
+		dprintk(VIDC_ERR, "%s invalid core\n", __func__);
+		return -EINVAL;
+	}
+	dprintk(VIDC_INFO, "%s\n", __func__);
+
+	return msm_vidc_suspend(core->id);
+}
+
+static int msm_vidc_pm_resume(struct device *dev)
+{
+	dprintk(VIDC_INFO, "%s\n", __func__);
+	return 0;
+}
+
+static const struct dev_pm_ops msm_vidc_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(msm_vidc_pm_suspend, msm_vidc_pm_resume)
 };
 
 MODULE_DEVICE_TABLE(of, msm_vidc_dt_match);
@@ -509,6 +615,7 @@ static struct platform_driver msm_vidc_driver = {
 		.name = "msm_vidc_v4l2",
 		.owner = THIS_MODULE,
 		.of_match_table = msm_vidc_dt_match,
+		.pm = &msm_vidc_pm_ops,
 	},
 };
 
